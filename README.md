@@ -4,10 +4,9 @@ A live map of Brisbane trains. A small Express server reads TransLink's real-tim
 
 📁 **[GitHub Repo](https://github.com/vy-trg/railway-live)**
 
-<!-- Add after deploying: 🔗 **[Live Demo](https://YOUR-APP.onrender.com)** -->
-<!-- Add after taking a screenshot (save it as docs/screenshot.png):
+🔗 **[Live Demo](https://railway-live.onrender.com/)**
+
 <p align="center"><img src="docs/screenshot.png" alt="Railway Live map showing train markers across Brisbane" width="720"></p>
--->
 
 ---
 
