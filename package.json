@@ -2,9 +2,10 @@
   "name": "railway-live",
   "version": "1.0.0",
   "description": "Live map of Queensland Rail trains from TransLink GTFS-realtime",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
   "keywords": [],
   "author": "",
@@ -13,5 +14,8 @@
   "dependencies": {
     "express": "^5.3.0",
     "gtfs-realtime-bindings": "^2.2.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

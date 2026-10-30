@@ -1,91 +1,89 @@
 import express from 'express';
 import GtfsRealtimeBindings from 'gtfs-realtime-bindings';
 
-// 1. Initialize Express application first
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// TransLink GTFS-RT Vehicle Positions URL (No API key required)
-const TRANS_LINK_URL = "https://gtfsrt.api.translink.com.au/api/realtime/SEQ/VehiclePositions/Rail";
+// TransLink GTFS-RT Vehicle Positions URL (no API key required)
+const TRANSLINK_URL = process.env.FEED_URL
+    || "https://gtfsrt.api.translink.com.au/api/realtime/SEQ/VehiclePositions/Rail";
 
-// Cache variables to store train data and last fetch timestamp
-let trainCache = {
-    data: null,
-    lastUpdated: 0
-};
-const CACHE_DURATION = 30000; // Cache duration set to 30 seconds (30,000 ms)
+const CACHE_DURATION = 30_000;   // TransLink refreshes about every 30 seconds
+const FETCH_TIMEOUT = 10_000;    // give up on a slow feed after 10 seconds
 
-// 2. Serve static files from the 'public' folder (same origin, avoids CORS issues)
+// Latest decoded feed, kept in memory
+const trainCache = { data: null, lastUpdated: 0 };
+
+// If several browsers ask while a fetch is already running, they all wait
+// for that one fetch instead of starting their own.
+let inFlight = null;
+
+// Serve the map page from the same origin as the API (no CORS needed)
 app.use(express.static('public'));
 
-// Helper function to fetch and decode train data from TransLink feed
+// Fetch the feed, decode the protobuf and keep only the fields the map needs
 async function fetchTrains() {
-    const response = await fetch(TRANS_LINK_URL);
+    const response = await fetch(TRANSLINK_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT) });
     if (!response.ok) {
-        throw new Error(`Failed to fetch feed: ${response.statusText}`);
+        throw new Error(`Feed responded ${response.status} ${response.statusText}`);
     }
-    
+
     const buffer = await response.arrayBuffer();
     const feed = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(new Uint8Array(buffer));
-    
-    const trains = [];
-    feed.entity.forEach((entity) => {
-        if (entity.vehicle && entity.vehicle.position) {
-            trains.push({
-                id: entity.id,
-                tripId: entity.vehicle.trip ? entity.vehicle.trip.tripId : null,
-                lat: entity.vehicle.position.latitude,
-                lng: entity.vehicle.position.longitude
-            });
-        }
-    });
-    
-    return trains;
+
+    return feed.entity
+        .filter((entity) => entity.vehicle && entity.vehicle.position)
+        .map((entity) => ({
+            id: entity.id,
+            tripId: entity.vehicle.trip?.tripId ?? null,
+            lat: entity.vehicle.position.latitude,
+            lng: entity.vehicle.position.longitude,
+        }));
 }
 
-// API endpoint to get train positions with 30-second caching
-app.get('/api/trains', async (req, res) => {
-    const currentTime = Date.now();
-    
-    // Return cached data if it is still valid
-    if (trainCache.data && (currentTime - trainCache.lastUpdated < CACHE_DURATION)) {
-        return res.json({
-            updatedAt: new Date(trainCache.lastUpdated).toISOString(),
-            source: "cache",
-            trains: trainCache.data
-        });
+// Return cached trains if they are fresh, otherwise fetch once and cache
+async function getTrains() {
+    const age = Date.now() - trainCache.lastUpdated;
+    if (trainCache.data && age < CACHE_DURATION) {
+        console.log(`[cache] hit (${Math.round(age / 1000)}s old)`);
+        return { trains: trainCache.data, stale: false };
     }
 
-    try {
-        // Fetch fresh data from TransLink feed
-        const freshTrains = await fetchTrains();
-        
-        // Update cache
-        trainCache.data = freshTrains;
-        trainCache.lastUpdated = Date.now();
+    if (!inFlight) {
+        console.log('[feed] fetching from TransLink');
+        inFlight = fetchTrains().finally(() => { inFlight = null; });
+    }
+    const trains = await inFlight;
+    trainCache.data = trains;
+    trainCache.lastUpdated = Date.now();
+    return { trains, stale: false };
+}
 
-        res.json({
-            updatedAt: new Date(trainCache.lastUpdated).toISOString(),
-            source: "live",
-            trains: freshTrains
-        });
+app.get('/api/health', (req, res) => {
+    res.json({ ok: true });
+});
+
+app.get('/api/trains', async (req, res) => {
+    try {
+        const { trains, stale } = await getTrains();
+        res.json({ updatedAt: new Date(trainCache.lastUpdated).toISOString(), stale, trains });
     } catch (error) {
-        console.error("Error fetching train data:", error);
-        
-        // Fallback to stale cache if available when API fails
+        console.error('[feed] error:', error.message);
+
+        // Feed is down: keep the map working with the last known positions
         if (trainCache.data) {
-            return res.status(200).json({
+            return res.json({
                 updatedAt: new Date(trainCache.lastUpdated).toISOString(),
-                source: "stale-cache",
-                trains: trainCache.data
+                stale: true,
+                trains: trainCache.data,
             });
         }
-        
-        res.status(500).json({ error: "Failed to fetch train positions" });
+
+        // Nothing cached yet, so there is nothing useful to show
+        res.status(503).json({ error: 'Train feed is unavailable right now' });
     }
 });
 
-// 3. Start the server
 app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log(`Railway Live running on http://localhost:${PORT}`);
 });

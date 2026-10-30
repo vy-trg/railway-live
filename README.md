@@ -1,39 +1,33 @@
 # Railway Live 🚆
 
-A real-time Brisbane train tracking web application built with Node.js, Express, and Leaflet.js, consuming TransLink's live GTFS-RT feed with smart 30-second caching and graceful error handling.
+A live map of Brisbane trains. A small Express server reads TransLink's real-time GTFS-RT feed, caches it for 30 seconds, and serves it as JSON to a Leaflet map that refreshes itself.
 
-🔗 **[Live Demo](https://railway-live.onrender.com)** *(Replace with your Render link if available)* &nbsp;·&nbsp; 📁 **[GitHub Repo](https://github.com/vy-trg/railway-live)**
+📁 **[GitHub Repo](https://github.com/vy-trg/railway-live)**
 
----
-
-<p align="center">
-  <img src="public/screenshot.png" alt="Railway Live Map Interface" width="720">
-  <br>
-  <sub>Live train positions across Brisbane network rendered with custom Leaflet markers and 30-second polling updates.</sub>
-</p>
-
-📺 **Demo video:** *(Add Loom or YouTube link here if available)*
+<!-- Add after deploying: 🔗 **[Live Demo](https://YOUR-APP.onrender.com)** -->
+<!-- Add after taking a screenshot (save it as docs/screenshot.png):
+<p align="center"><img src="docs/screenshot.png" alt="Railway Live map showing train markers across Brisbane" width="720"></p>
+-->
 
 ---
 
 ## About
 
-**Railway Live** addresses the challenge of visualizing live transit data reliably. TransLink provides real-time train positions via Protocol Buffers (GTFS-RT), but fetching live feeds directly from client devices risks rate-limiting and CORS issues. 
+TransLink publishes where every train is, but in Protocol Buffers (a binary format), not JSON, and the feed only changes about every 30 seconds. If every browser fetched it directly, each visitor would hit TransLink separately and the browser would have to decode protobuf itself.
 
-This project bridges that gap by implementing a lightweight Express backend that fetches, decodes, and caches vehicle positions every 30 seconds, providing a clean JSON API for an interactive Leaflet map interface.
+Railway Live puts a thin server in between: it fetches and decodes the feed **at most once every 30 seconds**, however many people have the map open, and hands the browser a small, clean JSON list.
 
-**My role:** Independent Developer — designed the architecture, built the Node.js GTFS-RT ingestion backend, implemented the 30-second cache layer, built the responsive Leaflet frontend, and handled stale-data fallback UI states.
+**My role:** Solo project. I built the GTFS-RT ingestion and cache on the server, the `/api/trains` endpoint, and the Leaflet map with its status banner.
 
 ---
 
 ## Features
 
-- **Live Train Tracking** — Real-time position markers for active rail vehicles across the SEQ (South East Queensland) network.
-- **Auto-Refresh** — Polling mechanism that updates marker positions seamlessly every 30 seconds without page reloads.
-- **Smart Server Caching** — Backend cache window (30s) ensuring 100 concurrent clients trigger at most 2 requests/minute to TransLink servers.
-- **Resilient Fallback UI** — Status banner alerting users if the live feed is stale or unavailable, preserving the last known coordinates instead of breaking the UI.
-- **Interactive Popups** — Click any train marker to inspect Train ID and Trip ID.
-- **Responsive Layout** — Full-screen map view optimized for desktop and mobile browsers.
+- **Live train positions** for the South East Queensland rail network, refreshed every 30 seconds without reloading the page.
+- **Server-side cache:** the feed is fetched at most once per 30 seconds; requests that arrive while a fetch is running wait for that same fetch.
+- **Keeps working when the feed fails:** the map keeps the last known positions and a yellow banner says the data may be old. If there is no data at all, the API returns `503` and the banner turns red.
+- **Markers move instead of multiplying:** each train keeps one marker that is moved with `setLatLng`; trains that leave the feed are removed.
+- **Mobile friendly:** full-screen map, refreshes as soon as you come back to the tab on a phone.
 
 ---
 
@@ -41,37 +35,70 @@ This project bridges that gap by implementing a lightweight Express backend that
 
 | Area | Tools |
 |---|---|
-| **Backend** | Node.js (v22+), Express |
-| **Data Ingestion** | `gtfs-realtime-bindings` (Protocol Buffers decoder) |
-| **Frontend** | Vanilla HTML5, CSS3, JavaScript (ES6 Modules) |
-| **Mapping & UI** | Leaflet.js, OpenStreetMap tile layer |
-| **Deployment** | Render (Web Service) |
+| Server | Node.js 22+, Express 5 |
+| Data | TransLink GTFS-RT, decoded with `gtfs-realtime-bindings` |
+| Frontend | HTML, CSS, vanilla JavaScript |
+| Map | Leaflet 1.9, OpenStreetMap tiles |
 
 ---
 
-## Architecture & Technical Decisions
+## How it works
 
-The application follows a simple **Client–Server Architecture** serving static assets from the same origin to eliminate CORS complications:
-[ Browser / Leaflet ] <--- (JSON via fetch every 30s) ---> [ Express API ] <--- (GTFS-RT Feed) ---> [ TransLink API ]
-|
-[ 30s In-Memory Cache ]
+```
+Browser (Leaflet map)  --every 30s-->  GET /api/trains  -->  30s in-memory cache  -->  TransLink GTFS-RT feed
+```
 
-### Key Technical Decisions:
-1. **Same-Origin Static Serving (`express.static`)**: Serving `index.html` directly through Express eliminates Cross-Origin Resource Sharing (CORS) preflight requests.
-2. **In-Memory Cache Layer**: TransLink updates vehicle positions roughly every 30 seconds. Storing the decoded feed in an in-memory object (`trainCache`) avoids redundant network calls and guarantees fast API response times.
-3. **Smooth Marker Movement (`setLatLng`)**: Existing markers are updated dynamically via `marker.setLatLng()` rather than re-creating map layers, avoiding screen flicker and preserving open popups.
+1. **Same origin:** Express serves `public/index.html` and the API from one server, so the browser needs no CORS setup.
+2. **In-memory cache:** the decoded feed is kept in a variable with the time it was fetched. Requests within 30 seconds get the cached copy.
+3. **Timeout:** a TransLink request that takes longer than 10 seconds is cancelled, so a slow feed can't hang the API.
+
+### API
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/api/trains` | `{ updatedAt, stale, trains: [{ id, tripId, lat, lng }] }`. `stale: true` means the feed failed and these are the last known positions. `503` if no data is available yet. |
+| `GET` | `/api/health` | `{ ok: true }` |
 
 ---
 
-## Getting Started
+## Run it locally
 
-### Prerequisites
-- **Node.js**: v22.0.0 or higher (required for native `fetch` and `gtfs-realtime-bindings` compatibility)
-- **npm**: v10.0.0 or higher
+**Needs:** Node.js 22 or newer (`node -v` to check). No API key is required.
 
-### Installation
+```bash
+git clone https://github.com/vy-trg/railway-live.git
+cd railway-live
+npm install
+npm run dev
+```
 
-1. Clone the repository:
-   ```bash
-   git clone [https://github.com/vy-trg/railway-live.git](https://github.com/vy-trg/railway-live.git)
-   cd railway-live
+Open http://localhost:3000. Trains only appear while Queensland Rail services are running.
+
+**Try the error handling:** run `FEED_URL=http://localhost:9999 npm run dev` (an address with nothing on it). The API returns `503` and the map shows a red banner instead of breaking.
+
+---
+
+## Project structure
+
+```
+server.js          Express server: fetch, decode, cache, /api/trains
+public/index.html  Leaflet map, markers and status banner
+learning/          Practice files from building this (first feed script, first Leaflet map)
+NOTES.md           Notes on the data source and what I learned
+```
+
+---
+
+## What I learned
+
+- GTFS-RT is protobuf, not JSON; `FeedMessage.decode` turns the bytes into JavaScript objects.
+- The difference between **VehiclePositions** (where each train is now) and **TripUpdates** (delays and arrival times).
+- Caching on the server protects both the upstream API and response time, and a cache also gives you something to show when the upstream fails.
+- Updating existing Leaflet markers instead of redrawing them avoids flicker and duplicate markers.
+
+---
+
+## Data & licence
+
+Train data: [TransLink GTFS-RT](https://translink.com.au/about-translink/open-data), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Map tiles: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
