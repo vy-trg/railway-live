@@ -97,6 +97,14 @@ NOTES.md           Notes on the data source and what I learned
 
 ---
 
+## Known limitations & next steps
+
+- Popups show TransLink's internal trip ID, not the line name. Next: join with the static GTFS timetable to show the line and destination (e.g. "Ferny Grove → Beenleigh").
+- The cache lives in memory, so it is empty after the free Render server restarts or wakes from sleep; the first request after that waits for TransLink.
+- Markers jump every 30 seconds rather than gliding between positions.
+
+---
+
 ## Data & licence
 
 Train data: [TransLink GTFS-RT](https://translink.com.au/about-translink/open-data), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
