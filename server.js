@@ -25,6 +25,8 @@ app.set('trust proxy', 1);
 
 // Security headers. The map loads Leaflet from unpkg and tiles from OpenStreetMap,
 // so those two sources are allowed on top of helmet's defaults.
+// OpenStreetMap blocks tile requests with no Referer, and helmet's default is
+// "no-referrer", so send just our origin to other sites (the browser default).
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
@@ -32,6 +34,7 @@ app.use(helmet({
             'img-src': ["'self'", 'data:', 'https://tile.openstreetmap.org'],
         },
     },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 
 // The page polls twice a minute, so 60 API requests a minute per visitor is plenty
