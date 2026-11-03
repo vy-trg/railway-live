@@ -1,5 +1,7 @@
 import express from 'express';
 import GtfsRealtimeBindings from 'gtfs-realtime-bindings';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,6 +19,28 @@ const trainCache = { data: null, lastUpdated: 0 };
 // If several browsers ask while a fetch is already running, they all wait
 // for that one fetch instead of starting their own.
 let inFlight = null;
+
+// Render is a proxy in front of the app: trust one hop so rate limiting sees real IPs
+app.set('trust proxy', 1);
+
+// Security headers. The map loads Leaflet from unpkg and tiles from OpenStreetMap,
+// so those two sources are allowed on top of helmet's defaults.
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            'script-src': ["'self'", 'https://unpkg.com'],
+            'img-src': ["'self'", 'data:', 'https://tile.openstreetmap.org'],
+        },
+    },
+}));
+
+// The page polls twice a minute, so 60 API requests a minute per visitor is plenty
+app.use('/api', rateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+}));
 
 // Serve the map page from the same origin as the API (no CORS needed)
 app.use(express.static('public'));
