@@ -1,3 +1,5 @@
+# Bugs I hit and what I learned
+
 ## Map tiles showed "Access blocked 403" after adding helmet (3 Nov 2026)
 
 **What happened:** After adding helmet, the map looked fine at first, but zooming in showed OpenStreetMap "Access blocked" tiles.
