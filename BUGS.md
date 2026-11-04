@@ -13,3 +13,13 @@
 ## Secret scanning
 
 No secrets were ever committed to this repo (gitleaks scan of full history: no leaks). I added gitleaks as a pre-commit hook and in GitHub Actions anyway, after a password leak in my other project, Focus Tracker. The hook uses `pass_filenames: false` because the default `gitleaks-system` hook silently scanned nothing (details in Focus Tracker's BUGS.md).
+
+## Docker image built but the container crashed (4 Nov 2026)
+
+**What happened:** `docker compose up --build` built the image, then the container exited with `Cannot find module '/app/app.js'`.
+
+**Cause:** I copied the Dockerfile from Focus Tracker and kept `CMD ["node", "app.js"]`, but this app starts from `server.js`.
+
+**Fix:** `CMD ["node", "server.js"]`.
+
+**Lesson:** A successful build doesn't mean the app runs. Start the container and check it, not just the build.
