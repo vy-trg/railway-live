@@ -78,6 +78,18 @@ Open http://localhost:3000. Trains only appear while Queensland Rail services ar
 
 ---
 
+### Run with Docker
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:3000. Stop with `Ctrl + C`, then `docker compose down`.
+
+The live demo on Render uses Render's Node runtime; CI builds the Docker image on every pull request to check the Dockerfile still works.
+
+---
+
 ## Testing
 
 ```bash
@@ -105,6 +117,8 @@ learning/          Practice files from building this (first feed script, first L
 NOTES.md           Notes on the data source and what I learned
 feed.js            Decodes the GTFS-RT feed (unit tested)
 test/feed.test.js  Tests for feed.js
+Dockerfile         Builds the app image (Node 22, runs as a non-root user)
+compose.yaml       Runs the app in Docker locally
 ```
 
 ---
