@@ -1,5 +1,5 @@
 import express from 'express';
-import GtfsRealtimeBindings from 'gtfs-realtime-bindings';
+import { parseFeed } from './feed.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
@@ -55,18 +55,7 @@ async function fetchTrains() {
         throw new Error(`Feed responded ${response.status} ${response.statusText}`);
     }
 
-    const buffer = await response.arrayBuffer();
-    const feed = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(new Uint8Array(buffer));
-
-    return feed.entity
-        .filter((entity) => entity.vehicle && entity.vehicle.position)
-        .map((entity) => ({
-            id: entity.id,
-            tripId: entity.vehicle.trip?.tripId ?? null,
-            lat: entity.vehicle.position.latitude,
-            lng: entity.vehicle.position.longitude,
-        }));
-}
+    return parseFeed(await response.arrayBuffer());}
 
 // Return cached trains if they are fresh, otherwise fetch once and cache
 async function getTrains() {

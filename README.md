@@ -77,6 +77,24 @@ Open http://localhost:3000. Trains only appear while Queensland Rail services ar
 
 ---
 
+## Testing
+
+```bash
+npm test
+```
+
+Unit tests use Node's built-in test runner (`node:test`), so there's nothing extra to install. They cover `parseFeed` in `feed.js`, the part that decodes TransLink's binary GTFS-RT feed:
+
+- a vehicle becomes `{ id, tripId, lat, lng }`
+- entities without a position are skipped
+- a missing trip gives `tripId: null`
+- an empty feed gives an empty list
+- invalid data throws an error
+
+The tests build real protobuf feeds in code, so they never call TransLink and always run the same way.
+
+---
+
 ## Project structure
 
 ```
@@ -84,6 +102,8 @@ server.js          Express server: fetch, decode, cache, /api/trains
 public/index.html  Leaflet map, markers and status banner
 learning/          Practice files from building this (first feed script, first Leaflet map)
 NOTES.md           Notes on the data source and what I learned
+feed.js            Decodes the GTFS-RT feed (unit tested)
+test/feed.test.js  Tests for feed.js
 ```
 
 ---
