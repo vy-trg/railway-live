@@ -8,7 +8,7 @@ export function parseFeed(buffer) {
         .map((entity) => ({
             id: entity.id,
             tripId: entity.vehicle.trip?.tripId ?? null,
-            lat: entity.vehicle.position.latitude,
+            latitude: entity.vehicle.position.latitude,
             lng: entity.vehicle.position.longitude,
         }));
 }
