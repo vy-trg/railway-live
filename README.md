@@ -1,4 +1,5 @@
 # Railway Live 🚆
+![CI](https://github.com/vy-trg/railway-live/actions/workflows/ci.yml/badge.svg)
 
 A live map of Brisbane trains. A small Express server reads TransLink's real-time GTFS-RT feed, caches it for 30 seconds, and serves it as JSON to a Leaflet map that refreshes itself.
 
