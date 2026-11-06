@@ -27,6 +27,8 @@ export function parseFeed(buffer) {
             tripId: entity.vehicle.trip?.tripId ?? null,
             routeId: entity.vehicle.trip?.routeId || null,
             stopId: entity.vehicle.stopId || null,
+            stopSequence: entity.vehicle.currentStopSequence ?? null,
+            atStop: entity.vehicle.currentStatus === 1, // STOPPED_AT
             lat: entity.vehicle.position.latitude,
             lng: entity.vehicle.position.longitude,
         }));

@@ -91,3 +91,19 @@ test('journey panel marks passed, next and skipped stops', () => {
     assert.equal(progress[0].name, 'Springfield Central');
     assert.equal(progress[1].expected, '12:05 am'); // 200 s + 2 min late
 });
+
+import { trainLocation } from '../live.js';
+
+test('where the train is compared with your station', () => {
+    assert.equal(trainLocation({ stopSequence: 5, atStop: true, stopName: 'Richlands' }, 7), 'At Richlands · 2 stops away');
+    assert.equal(trainLocation({ stopSequence: 6, atStop: false, stopName: 'Darra' }, 7), 'Heading to Darra · 2 stops away');
+    assert.equal(trainLocation({ stopSequence: 7, atStop: true, stopName: 'Darra' }, 7), 'At the platform');
+    assert.equal(trainLocation({ stopSequence: 7, atStop: false, stopName: 'Darra' }, 7), 'Arriving');
+    assert.equal(trainLocation({ stopSequence: 9, atStop: true, stopName: 'Oxley' }, 7), null); // already gone
+    assert.equal(trainLocation(undefined, 7), null); // not started yet
+});
+
+test('journey stops say how many seconds until the train gets there', () => {
+    const stops = [{ stop_sequence: 1, departure_secs: 600, name: 'A station', platform: '1' }];
+    assert.equal(buildTripProgress(stops, { stops: [{ sequence: 1, delay: 60, skipped: false }] }, 300, 0)[0].etaSec, 360);
+});

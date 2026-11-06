@@ -175,8 +175,75 @@ $('journey-stops').addEventListener('click', (e) => {
     if (e.target.closest('[data-unfold]')) {
         showAllStops = true;
         loadJourney();
+        return;
     }
+    const bell = e.target.closest('[data-remind]');
+    if (bell) toggleReminder(state.selected, Number(bell.dataset.remind), bell.dataset.name);
 });
+
+// ---------- "Remind me" before a stop ----------
+// One reminder at a time: a train and a stop. Checked on every 30-second refresh; when the
+// train is expected at the stop within 2 minutes, the page shows a banner and, if allowed,
+// a system notification. Kept in localStorage so a refresh doesn't lose it.
+const REMIND_BEFORE_SEC = 120;
+const BELL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5-6.71V3.5a2 2 0 1 0-4 0v.79A7 7 0 0 0 5 11v5l-2 2v1h18v-1Z"/></svg>';
+let reminder = null;
+try { reminder = JSON.parse(localStorage.getItem('reminder')) || null; } catch { reminder = null; }
+
+function saveReminder() {
+    try {
+        if (reminder) localStorage.setItem('reminder', JSON.stringify(reminder));
+        else localStorage.removeItem('reminder');
+    } catch { /* private mode: the reminder just won't survive a reload */ }
+}
+const isReminder = (tripId, seq) => Boolean(reminder && reminder.tripId === tripId && reminder.sequence === seq);
+const remindable = (s) => s.state === 'upcoming' || (s.state === 'next' && s.etaSec > REMIND_BEFORE_SEC);
+
+async function toggleReminder(tripId, sequence, name) {
+    if (isReminder(tripId, sequence)) {
+        reminder = null;
+        showBanner('Reminder cancelled.');
+    } else {
+        reminder = { tripId, sequence, name, headsign: $('journey-title').textContent };
+        showBanner(`We’ll remind you about 2 minutes before ${name}. Keep this page open.`);
+        if ('Notification' in window && Notification.permission === 'default') {
+            try { await Notification.requestPermission(); } catch { /* the banner still works */ }
+        }
+    }
+    saveReminder();
+    loadJourney();
+}
+
+async function checkReminder() {
+    if (!reminder) return;
+    try {
+        const j = await getJson(`/api/trips/${encodeURIComponent(reminder.tripId)}`);
+        const stop = j.stops.find((s) => s.sequence === reminder.sequence);
+        if (!stop || stop.state === 'passed' || stop.state === 'skipped') {
+            reminder = null; // the train has gone past it (or won't stop): nothing left to remind
+        } else if (stop.etaSec <= REMIND_BEFORE_SEC) {
+            const text = `${stop.name} in about ${Math.max(1, Math.round(stop.etaSec / 60))} min. Get ready to get off.`;
+            showBanner(text, true);
+            if ('Notification' in window && Notification.permission === 'granted') {
+                try { new Notification('Railway Live', { body: text }); } catch { /* some phones only allow this from a service worker */ }
+            }
+            reminder = null;
+        }
+        saveReminder();
+    } catch (err) {
+        console.error('Reminder check failed:', err);
+    }
+}
+
+let bannerTimer = null;
+function showBanner(text, urgent = false) {
+    const el = $('banner');
+    el.textContent = text;
+    el.className = `banner${urgent ? ' urgent' : ''}`;
+    el.hidden = false;
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => { el.hidden = true; }, urgent ? 30000 : 5000);
+}
 
 async function selectTrain(tripId) {
     state.selected = tripId;
@@ -210,7 +277,7 @@ async function loadJourney() {
         stops.innerHTML = (folded ? `<li class="fold"><button type="button" class="link-btn" data-unfold>${folded} earlier stop${folded === 1 ? '' : 's'}</button></li>` : '')
             + j.stops.slice(folded).map((s) => `
             <li class="${s.state}">
-              <span class="name">${escapeHtml(s.name)}</span>
+              <span class="name">${escapeHtml(s.name)}${remindable(s) ? ` <button type="button" class="bell" data-remind="${s.sequence}" data-name="${escapeHtml(s.name)}" aria-pressed="${isReminder(j.tripId, s.sequence)}" aria-label="Remind me before ${escapeHtml(s.name)}" title="Remind me 2 minutes before">${BELL}</button>` : ''}</span>
               <span class="time">${s.expected ? `<s>${escapeHtml(s.scheduled)}</s>${escapeHtml(s.expected)}` : escapeHtml(s.scheduled)}</span>
               ${s.state === 'skipped' ? '<span class="sub">Not stopping</span>' : s.platform && s.state === 'next' ? `<span class="sub">Platform ${escapeHtml(s.platform)}</span>` : ''}
             </li>`).join('');
@@ -265,6 +332,7 @@ async function loadLive() {
         feedState = trains.stale ? 'stale' : 'live';
         renderSummary(summary);
         if (state.selected) loadJourney();
+        checkReminder();
     } catch (err) {
         console.error('Failed to load trains:', err);
         feedState = 'down';
@@ -322,7 +390,8 @@ async function loadBoard() {
         board.innerHTML = departures.map((d) => `
             <li class="${d.status === 'cancelled' ? 'cancelled' : ''}">
               <span class="time">${d.expected ? `<small>${escapeHtml(d.scheduled)}</small>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</span>
-              <span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${escapeHtml(d.headsign)}</span>
+              <span class="dest"><span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${escapeHtml(d.headsign)}</span>
+                ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${d.minutesAway} min` : ''}</span>` : ''}</span>
               <span class="right">${statusHtml(d.status, d.statusText)}${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
             </li>`).join('');
     } catch (err) {

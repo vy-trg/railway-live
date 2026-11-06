@@ -21,7 +21,7 @@ test('turns a vehicle into { id, tripId, routeId, stopId, lat, lng }', () => {
     const trains = parseFeed(buffer);
 
     assert.equal(trains.length, 1);
-    assert.deepEqual(Object.keys(trains[0]).sort(), ['id', 'lat', 'lng', 'routeId', 'stopId', 'tripId']);
+    assert.deepEqual(Object.keys(trains[0]).sort(), ['atStop', 'id', 'lat', 'lng', 'routeId', 'stopId', 'stopSequence', 'tripId']);
     assert.equal(trains[0].id, 'v1');
     assert.equal(trains[0].tripId, 'T1');
     // Coordinates are 32-bit floats in protobuf, so compare with a small tolerance

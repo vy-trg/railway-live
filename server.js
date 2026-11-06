@@ -118,14 +118,23 @@ app.get('/api/departures', handle(async (req, res) => {
     if (!stationIds.has(station)) {
         return res.status(400).json({ error: 'Unknown station' });
     }
-    const [updates, now] = await Promise.all([getTripUpdates(), nowSec()]);
+    const [updates, vehicles, now] = await Promise.all([getTripUpdates(), getVehicles(), nowSec()]);
     const clock = brisbaneClock(now);
     // Look back 30 minutes so late trains that haven't left yet still show
     const rows = await db.getDepartures(station, clock.date, clock.secs - 1800, clock.secs + 7200, 40);
+    // Where each of those trains is right now (if it has started its trip)
+    const tripIds = new Set(rows.map((r) => r.trip_id));
+    const running = vehicles.data.filter((v) => tripIds.has(v.tripId));
+    const names = await db.getStopNames(running.map((v) => v.stopId).filter(Boolean));
+    const byTrip = new Map(running.map((v) => [v.tripId, {
+        stopSequence: v.stopSequence,
+        atStop: v.atStop,
+        stopName: names.get(v.stopId)?.name?.replace(/ station$/, '') ?? 'the previous stop',
+    }]));
     res.json({
         station,
         stale: updates.stale,
-        departures: buildBoard(rows, updates.data, clock.secs).slice(0, 8),
+        departures: buildBoard(rows, updates.data, clock.secs, byTrip).slice(0, 8),
     });
 }));
 
@@ -160,6 +169,7 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
         headsign: trip.headsign.replace(/ station$/, ''),
         color: `#${trip.color}`,
         textColor: `#${trip.text_color}`,
+        now,
         stops: buildTripProgress(stops, updates.data.get(tripId), now, dayStart),
     });
 }));

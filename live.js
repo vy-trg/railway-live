@@ -59,7 +59,20 @@ export function summarize(trains) {
 }
 
 // Scheduled departures + realtime = what the departure board shows
-export function buildBoard(rows, tripUpdates, nowClockSecs) {
+// Where a train is compared with the station you're waiting at, like "At Richlands · 2 stops away".
+// Stops away counts the stops the train still has to reach, including yours.
+// vehicle: { stopSequence, atStop, stopName } from the live feed (stopSequence = the stop it's at or heading to).
+export function trainLocation(vehicle, stopSequence) {
+    if (!vehicle || vehicle.stopSequence === null || vehicle.stopSequence === undefined) return null;
+    const away = stopSequence - vehicle.stopSequence + (vehicle.atStop ? 0 : 1);
+    if (away < 0) return null; // already past this station
+    if (away === 0) return 'At the platform';
+    if (away === 1 && !vehicle.atStop) return 'Arriving';
+    const where = vehicle.atStop ? `At ${vehicle.stopName}` : `Heading to ${vehicle.stopName}`;
+    return `${where} · ${away} stop${away === 1 ? '' : 's'} away`;
+}
+
+export function buildBoard(rows, tripUpdates, nowClockSecs, vehicles = new Map()) {
     return rows
         .map((r) => {
             const tu = tripUpdates.get(r.trip_id);
@@ -79,6 +92,8 @@ export function buildBoard(rows, tripUpdates, nowClockSecs) {
                 color: `#${r.color}`,
                 textColor: `#${r.text_color}`,
                 platform: r.platform,
+                location: cancelled ? null : trainLocation(vehicles.get(r.trip_id), r.stop_sequence),
+                minutesAway: Math.max(0, Math.round((expected - nowClockSecs) / 60)),
             };
         })
         .filter((d) => d.expectedSecs >= nowClockSecs - 60); // already gone (late trains stay until they leave)
@@ -121,8 +136,11 @@ export function buildTripProgress(stops, tripUpdate, nowSec, serviceStartEpoch) 
         else if (expectedEpoch < nowSec - 30) state = 'passed';
         else if (!nextFound) { state = 'next'; nextFound = true; }
         return {
+            sequence: s.stop_sequence,
             name: s.name.replace(/ station$/, ''),
             platform: s.platform,
+            // Seconds until the train is expected here; the page uses it for "remind me" alerts
+            etaSec: expectedEpoch - nowSec,
             scheduled: formatClock(s.departure_secs),
             expected: delay === null || Math.abs(delay) < 60 ? null : formatClock(s.departure_secs + delay),
             delaySec: delay,

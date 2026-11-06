@@ -25,7 +25,8 @@ Railway Live puts a thin server in between: it fetches and decodes the feed **at
 
 - **Live map:** every train on track lines drawn in each route's TransLink colour (from GTFS `shapes.txt`, simplified with Douglas–Peucker), refreshed every 30 seconds. The dot shows how late it is: green on time, amber 2–5 min, red 5+.
 - **Journey card:** pick a train to see every stop with scheduled and expected times; passed stops are crossed out and folded away, skipped stops are marked.
-- **Next trains** from any station (Springfield Central by default): scheduled time, expected time when late, platform and status, including cancelled and skipped stops.
+- **Next trains** from any station (Springfield Central by default): scheduled time, expected time when late, platform and status, including cancelled and skipped stops, and where each train is now ("At Richlands · 2 stops away · 6 min").
+- **Remind me:** tap the bell next to a stop in the journey card and the page warns you about 2 minutes before the train gets there (banner, plus a notification if allowed). Works while the page is open; a background reminder would need a service worker.
 - **Network numbers** worked out from the live feed: trains running, share on time, average delay of late trains, and the route that is furthest behind right now.
 - **Rail alerts** from TransLink's Alerts feed (track closures, lift outages, timetable changes), with the lines they affect.
 - **Filter by line** (e.g. Springfield shows every train to or from Springfield). The line and station are kept in the URL, so a view can be shared.

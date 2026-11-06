@@ -267,3 +267,27 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .feed { background: transparent; padding: 6px 4px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .filter { padding: 6px; }
+
+/* Where the train is now, under the destination on the board */
+.board .dest { display: grid; gap: 2px; min-width: 0; }
+.board .where { font-size: 0.78rem; color: var(--muted); }
+
+/* Remind-me bell next to a stop in the journey card */
+.bell {
+    display: inline-grid; place-items: center; width: 26px; height: 26px; margin-left: 4px; vertical-align: -6px;
+    border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer;
+}
+.bell svg { width: 15px; height: 15px; fill: currentColor; }
+.bell:hover { background: var(--sand); color: var(--ink); }
+.bell[aria-pressed="true"] { background: var(--terracotta); color: #fff; }
+
+.banner {
+    position: fixed; z-index: 1100; left: 50%; top: 14px; transform: translateX(-50%);
+    width: min(92vw, 460px); margin: 0; padding: 12px 16px; border-radius: 14px;
+    background: var(--gum); color: #fff; font-weight: 700; box-shadow: var(--shadow);
+}
+.banner.urgent { background: var(--terracotta); }
+/* A bell on every stop is noise: show it on hover or keyboard focus, always when it's set */
+.bell { opacity: 0; transition: opacity 120ms; }
+.stops li:hover .bell, .bell:focus-visible, .bell[aria-pressed="true"] { opacity: 1; }
+@media (hover: none) { .bell { opacity: 0.55; } }
