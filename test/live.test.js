@@ -1,0 +1,77 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildLines } from '../lines.js';
+import { summarize, buildBoard, nextStop } from '../live.js';
+import { delayAtStop, brisbaneClock, formatClock } from '../schedule.js';
+
+const routes = [
+    { route_id: 'BRSP-5', long_name: 'Brisbane City - Springfield', color: '6CC6E9' },
+    { route_id: 'SPCA-5', long_name: 'Springfield - Caboolture', color: '27855A' },
+    { route_id: 'IPSP-5', long_name: 'Ipswich - Springfield', color: '6CC6E9' },
+    { route_id: 'BNBN-5', long_name: 'Beenleigh - Beenleigh', color: 'D53E45' },
+];
+
+test('a line covers every route that starts or ends there, coloured like most of them', () => {
+    const lines = buildLines(routes);
+    const springfield = lines.find((l) => l.name === 'Springfield');
+    assert.deepEqual(springfield.routeIds, ['BRSP-5', 'SPCA-5', 'IPSP-5']);
+    assert.equal(springfield.color, '6CC6E9');
+    assert.ok(!lines.some((l) => l.name === 'Brisbane City'));
+    assert.deepEqual(lines.find((l) => l.name === 'Beenleigh').routeIds, ['BNBN-5']); // no duplicates
+});
+
+const update = {
+    tripId: 'T1',
+    stops: [
+        { stopId: 'A', sequence: 3, delay: 120, time: 1000, skipped: false },
+        { stopId: 'B', sequence: 5, delay: 240, time: 2000, skipped: true },
+    ],
+};
+
+test('a delay carries on to later stops until a new one is given', () => {
+    assert.deepEqual(delayAtStop(update, 2), { delay: null, skipped: false });
+    assert.deepEqual(delayAtStop(update, 4), { delay: 120, skipped: false });
+    assert.deepEqual(delayAtStop(update, 5), { delay: 240, skipped: true });
+    assert.deepEqual(delayAtStop(undefined, 5), { delay: null, skipped: false });
+});
+
+test('the next stop is the first one the train has not passed and does not skip', () => {
+    assert.equal(nextStop(update, 900).stopId, 'A');
+    assert.equal(nextStop(update, 1500), null); // B is skipped
+});
+
+test('the board shows late times, cancellations, and hides trains that have left', () => {
+    const rows = [
+        { trip_id: 'T1', stop_sequence: 4, secs: 36000, headsign: 'Springfield Central station', long_name: 'x', color: '6CC6E9', text_color: '1D1D1D', platform: '1' },
+        { trip_id: 'T1', stop_sequence: 5, secs: 36600, headsign: 'Springfield Central station', long_name: 'x', color: '6CC6E9', text_color: '1D1D1D', platform: '1' },
+        { trip_id: 'T2', stop_sequence: 1, secs: 30000, headsign: 'Roma Street station', long_name: 'y', color: '27855A', text_color: 'FFFFFF', platform: '2' },
+    ];
+    const board = buildBoard(rows, new Map([['T1', update]]), 35000);
+    assert.equal(board.length, 2); // T2 left at 30000
+    assert.equal(board[0].scheduled, '10:00 am');
+    assert.equal(board[0].expected, '10:02 am');
+    assert.equal(board[0].status, 'late');
+    assert.equal(board[0].headsign, 'Springfield Central');
+    assert.equal(board[1].status, 'cancelled'); // skipped at this stop
+});
+
+test('summary: on-time share, average lateness and the most delayed route', () => {
+    const trains = [
+        { routeName: 'A', color: '#1', delaySec: 0 },
+        { routeName: 'A', color: '#1', delaySec: 30 },
+        { routeName: 'B', color: '#2', delaySec: 300 },
+        { routeName: 'C', color: '#3', delaySec: null },
+    ];
+    const s = summarize(trains);
+    assert.equal(s.running, 4);
+    assert.equal(s.withDelayInfo, 3);
+    assert.equal(s.onTimePercent, 67);
+    assert.equal(s.avgLateMinutes, 5);
+    assert.deepEqual(s.mostDelayed, { name: 'B', color: '#2', minutes: 5 });
+});
+
+test('Brisbane clock is UTC+10 all year', () => {
+    assert.deepEqual(brisbaneClock(1793968510), { date: '2026-11-06', secs: 81310 });
+    assert.equal(formatClock(81310), '10:35 pm');
+    assert.equal(formatClock(86400 + 600), '12:10 am');
+});

@@ -4,60 +4,83 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Railway Live – Brisbane Trains</title>
+    <title>Railway Live · South East Queensland trains</title>
+    <meta name="description" content="Live map, departures and delays for South East Queensland trains, from TransLink open data.">
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-
-    <style>
-        html,
-        body {
-            margin: 0;
-            height: 100%;
-        }
-
-        /* Full-screen map; dvh keeps it correct when the phone's address bar shows/hides */
-        #map {
-            height: 100vh;
-            height: 100dvh;
-            width: 100%;
-        }
-
-        /* Status banner floats over the map, to the right of the zoom buttons */
-        #status-banner {
-            position: fixed;
-            top: 10px;
-            left: 56px;
-            right: 10px;
-            max-width: 360px;
-            z-index: 1000;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font: 14px/1.4 system-ui, sans-serif;
-            background: #fff;
-            color: #1d2433;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-        }
-
-        #status-banner.ok {
-            background: #d4edda;
-        }
-
-        #status-banner.stale {
-            background: #fff3cd;
-        }
-
-        #status-banner.error {
-            background: #f8d7da;
-        }
-    </style>
+    <link rel="stylesheet" href="/style.css">
 </head>
 
 <body>
-    <!-- role="status" lets screen readers announce each update -->
-    <div id="status-banner" role="status">Loading train data…</div>
-    <div id="map"></div>
+    <header class="top">
+        <div class="brand">
+            <span class="logo" aria-hidden="true"></span>
+            <div>
+                <h1>Railway Live</h1>
+                <p>South East Queensland trains</p>
+            </div>
+        </div>
+        <!-- Where the data comes from and how fresh it is. role="status" is read out on change. -->
+        <p id="feed-status" class="feed" role="status"><span class="dot"></span><span class="feed-text">Connecting to TransLink…</span></p>
+    </header>
+
+    <main class="layout">
+        <!-- Numbers worked out from the live feed; nothing here is made up -->
+        <section class="kpis" aria-label="Network right now">
+            <div class="kpi"><span class="kpi-label">Trains running</span><b id="kpi-running">–</b><span id="kpi-running-sub" class="kpi-sub">&nbsp;</span></div>
+            <div class="kpi"><span class="kpi-label">On time</span><b id="kpi-ontime">–</b><span class="kpi-sub">within 1 minute</span></div>
+            <div class="kpi"><span class="kpi-label">Average delay</span><b id="kpi-delay">–</b><span class="kpi-sub">of late trains</span></div>
+            <div class="kpi"><span class="kpi-label">Most delayed now</span><b id="kpi-worst" class="kpi-worst">–</b><span id="kpi-worst-sub" class="kpi-sub">&nbsp;</span></div>
+        </section>
+
+        <section class="map-card" aria-label="Live map">
+            <div class="map-tools">
+                <label for="line-filter">Line</label>
+                <input id="line-filter" list="line-list" placeholder="All lines" autocomplete="off">
+                <datalist id="line-list"></datalist>
+                <button id="line-clear" type="button" class="ghost" hidden>Show all</button>
+            </div>
+            <div id="map"></div>
+            <ul class="legend" aria-label="Marker colours">
+                <li><i class="lv-ontime"></i>On time</li>
+                <li><i class="lv-late"></i>2–5 min late</li>
+                <li><i class="lv-verylate"></i>5+ min late</li>
+                <li><i class="ring"></i>Ring = line colour</li>
+            </ul>
+        </section>
+
+        <aside class="side">
+            <section class="card" aria-labelledby="board-title">
+                <div class="card-head">
+                    <h2 id="board-title">Next trains</h2>
+                    <label class="visually-hidden" for="station-select">Station</label>
+                    <select id="station-select"></select>
+                </div>
+                <table class="board">
+                    <thead>
+                        <tr><th scope="col">Time</th><th scope="col">To</th><th scope="col">Plat.</th><th scope="col">Status</th></tr>
+                    </thead>
+                    <tbody id="board-rows"><tr><td colspan="4" class="muted">Loading timetable…</td></tr></tbody>
+                </table>
+            </section>
+
+            <section class="card" aria-labelledby="alerts-title">
+                <div class="card-head">
+                    <h2 id="alerts-title">Alerts</h2>
+                    <span id="alerts-count" class="muted"></span>
+                </div>
+                <ul id="alerts" class="alerts"><li class="muted">Loading…</li></ul>
+            </section>
+        </aside>
+    </main>
+
+    <footer class="foot">
+        Data: <a href="https://translink.com.au/about-translink/open-data">TransLink GTFS and GTFS-realtime</a> (CC BY 4.0) ·
+        Map © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ·
+        <a href="https://github.com/vy-trg/railway-live">Source on GitHub</a>
+    </footer>
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
