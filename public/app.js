@@ -4,6 +4,35 @@ const DEFAULT_STATION = 'place_spcsta'; // Springfield Central: the station this
 
 const $ = (id) => document.getElementById(id);
 
+// ---------- Motion helpers ----------
+// Everything here is skipped for people who turn on "reduce motion" on their device.
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Hide an element after its exit animation (exits are ~20% shorter than entrances)
+function hideWithExit(el, ms = 160) {
+    if (el.hidden) return;
+    if (reduceMotion()) { el.hidden = true; return; }
+    el.classList.add('leaving');
+    setTimeout(() => { el.classList.remove('leaving'); el.hidden = true; }, ms);
+}
+
+// Rows appear 30 ms apart, but only the first time a list is filled,
+// so the 30-second refresh doesn't make everything dance again
+function staggerOnce(list) {
+    if (list.dataset.staggered || reduceMotion()) return;
+    list.dataset.staggered = '1';
+    list.classList.add('stagger');
+    setTimeout(() => list.classList.remove('stagger'), 900);
+}
+
+// Restart a short CSS animation (used for the "saved" pulse)
+function pulse(el) {
+    if (!el || reduceMotion()) return;
+    el.classList.remove('pulse');
+    void el.offsetWidth;
+    el.classList.add('pulse');
+}
+
 // Feed values go into HTML, so escape them first
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (c) => (
@@ -50,12 +79,17 @@ function showTab(name) {
         $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
         $(`view-${t}`).hidden = t !== name;
     }
+    // The highlight slides to the chosen tab (position 0, 1 or 2)
+    document.querySelector('.tabs').style.setProperty('--tab', TABS.indexOf(name));
     saveUrl();
 }
 for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
 
 // ---------- Map ----------
-const map = L.map('map', { zoomControl: false }).setView([-27.5, 152.98], 10);
+// The map can't be dragged far from South East Queensland; at the edge it pulls back like a rubber band
+const SEQ_BOUNDS = L.latLngBounds([-28.6, 151.6], [-25.9, 154.0]);
+const map = L.map('map', { zoomControl: false, maxBounds: SEQ_BOUNDS, maxBoundsViscosity: 0.6, minZoom: 8 })
+    .setView([-27.5, 152.98], 10);
 L.control.zoom({ position: 'topleft' }).addTo(map);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -103,6 +137,21 @@ function markerStyle(t) {
     };
 }
 
+// Trains glide to their new position over 1.2 s (ease-in-out) instead of jumping every 30 s
+function glide(marker, to) {
+    const from = marker.getLatLng();
+    if (reduceMotion() || (from.lat === to[0] && from.lng === to[1])) { marker.setLatLng(to); return; }
+    cancelAnimationFrame(marker.glideFrame);
+    const start = performance.now();
+    const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
+    const step = (now) => {
+        const k = ease(Math.min(1, (now - start) / 1200));
+        marker.setLatLng([from.lat + (to[0] - from.lat) * k, from.lng + (to[1] - from.lng) * k]);
+        if (k < 1) marker.glideFrame = requestAnimationFrame(step);
+    };
+    marker.glideFrame = requestAnimationFrame(step);
+}
+
 function drawTrains() {
     const seen = new Set();
     for (const t of lastTrains) {
@@ -111,7 +160,8 @@ function drawTrains() {
         const tip = `${t.headsign ? `To ${t.headsign}` : t.routeName} · ${t.delayText}`;
         const marker = trainMarkers.get(t.id);
         if (marker) {
-            marker.setLatLng([t.lat, t.lng]).setStyle(markerStyle(t)).setTooltipContent(escapeHtml(tip));
+            glide(marker, [t.lat, t.lng]);
+            marker.setStyle(markerStyle(t)).setTooltipContent(escapeHtml(tip));
         } else {
             const m = L.circleMarker([t.lat, t.lng], markerStyle(t)).addTo(map)
                 .bindTooltip(escapeHtml(tip), { direction: 'top', offset: [0, -8] });
@@ -141,12 +191,15 @@ const LEVEL_ORDER = { verylate: 0, late: 1, ontime: 2, unknown: 3 };
 const LIST_STEP = 12;
 let listLimit = LIST_STEP;
 function renderTrainList() {
+    $('train-list').removeAttribute('aria-busy');
     const list = $('train-list');
     const trains = lastTrains.filter(routeVisible)
         // Late trains first: that's what someone checking the network wants to know
         .sort((a, b) => (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || (b.delaySec ?? 0) - (a.delaySec ?? 0));
     if (trains.length === 0) {
-        list.innerHTML = `<li class="muted">${state.line ? `No ${escapeHtml(state.line)} trains running right now.` : 'No trains running right now.'}</li>`;
+        list.innerHTML = state.line
+            ? `<li class="empty">No ${escapeHtml(state.line)} trains are running right now. <button type="button" class="link-btn" data-clear-line>Show all lines</button></li>`
+            : '<li class="empty">No trains are running right now. Services usually start again around 5am.</li>';
         return;
     }
     const hidden = trains.length - listLimit;
@@ -158,8 +211,16 @@ function renderTrainList() {
           <span class="meta">${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
         </button></li>`).join('')
         + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more trains</button></li>` : '');
+    staggerOnce(list);
+    // Say what the filter did, e.g. "Showing 6 Springfield trains"
+    $('filter-note').textContent = state.line && trains.length
+        ? `Showing ${trains.length} ${state.line} train${trains.length === 1 ? '' : 's'}` : '';
 }
 $('train-list').addEventListener('click', (e) => {
+    if (e.target.closest('[data-clear-line]')) {
+        applyLine('');
+        return;
+    }
     if (e.target.closest('[data-more]')) {
         listLimit = Infinity;
         renderTrainList();
@@ -211,7 +272,8 @@ async function toggleReminder(tripId, sequence, name) {
         }
     }
     saveReminder();
-    loadJourney();
+    await loadJourney();
+    pulse(document.querySelector('.bell[aria-pressed="true"]'));
 }
 
 async function checkReminder() {
@@ -242,14 +304,18 @@ function showBanner(text, urgent = false) {
     el.className = `banner${urgent ? ' urgent' : ''}`;
     el.hidden = false;
     clearTimeout(bannerTimer);
-    bannerTimer = setTimeout(() => { el.hidden = true; }, urgent ? 30000 : 5000);
+    bannerTimer = setTimeout(() => hideWithExit(el), urgent ? 30000 : 5000);
 }
 
 async function selectTrain(tripId) {
     state.selected = tripId;
     showAllStops = false;
     const train = lastTrains.find((t) => t.tripId === tripId);
-    if (train) map.flyTo([train.lat, train.lng], Math.max(map.getZoom(), 12), { duration: 0.6 });
+    // flyTo zooms out and back in: the view travels in an arc rather than a straight slide
+    if (train) {
+        if (reduceMotion()) map.setView([train.lat, train.lng], Math.max(map.getZoom(), 12));
+        else map.flyTo([train.lat, train.lng], Math.max(map.getZoom(), 12), { duration: 0.6 });
+    }
     drawTrains();
     renderTrainList();
     await loadJourney();
@@ -281,6 +347,7 @@ async function loadJourney() {
               <span class="time">${s.expected ? `<s>${escapeHtml(s.scheduled)}</s>${escapeHtml(s.expected)}` : escapeHtml(s.scheduled)}</span>
               ${s.state === 'skipped' ? '<span class="sub">Not stopping</span>' : s.platform && s.state === 'next' ? `<span class="sub">Platform ${escapeHtml(s.platform)}</span>` : ''}
             </li>`).join('');
+        if (card.hidden) staggerOnce(stops); // stops settle in one after another when the card opens
         card.hidden = false;
         // Keep the next stop in view inside the card
         if (window.innerWidth < 1000 && !card.dataset.shown) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -293,7 +360,7 @@ async function loadJourney() {
 
 function closeJourney() {
     state.selected = null;
-    $('journey').hidden = true;
+    hideWithExit($('journey'), 180);
     delete $('journey').dataset.shown;
     drawTrains();
     renderTrainList();
@@ -371,20 +438,40 @@ $('line-filter').addEventListener('change', (e) => applyLine(e.target.value));
 $('line-clear').addEventListener('click', () => applyLine(''));
 
 // ---------- Next trains ----------
+let stations = [];
 async function loadStations() {
-    const stations = await getJson('/api/stations');
+    stations = await getJson('/api/stations');
     if (!stations.some((s) => s.id === state.station)) state.station = DEFAULT_STATION;
-    $('station-select').innerHTML = stations
-        .map((s) => `<option value="${escapeHtml(s.id)}"${s.id === state.station ? ' selected' : ''}>${escapeHtml(s.name)}</option>`)
-        .join('');
+    $('station-list').innerHTML = stations.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
+    $('station-input').value = stations.find((s) => s.id === state.station)?.name ?? '';
+}
+
+function pickStation(text) {
+    const typed = text.trim().toLowerCase().replace(/ station$/, '');
+    const match = stations.find((s) => s.name.toLowerCase() === typed)
+        ?? (typed.length >= 3 ? stations.find((s) => s.name.toLowerCase().startsWith(typed)) : null);
+    const error = $('station-error');
+    if (!match) {
+        // Say what to do, don't blame the typing
+        error.textContent = `We couldn’t find a station called “${text.trim()}”. Pick one from the list as you type.`;
+        error.hidden = false;
+        return;
+    }
+    error.hidden = true;
+    $('station-input').value = match.name;
+    state.station = match.id;
+    delete $('board').dataset.staggered; // a new station's list settles in again
+    saveUrl();
+    loadBoard();
 }
 
 async function loadBoard() {
     const board = $('board');
     try {
         const { departures } = await getJson(`/api/departures?station=${encodeURIComponent(state.station)}`);
+        board.removeAttribute('aria-busy');
         if (departures.length === 0) {
-            board.innerHTML = '<li class="muted">No trains in the next 2 hours.</li>';
+            board.innerHTML = '<li class="empty">No trains from here in the next 2 hours. Services may have finished for the night; try another station.</li>';
             return;
         }
         board.innerHTML = departures.map((d) => `
@@ -394,24 +481,40 @@ async function loadBoard() {
                 ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${d.minutesAway} min` : ''}</span>` : ''}</span>
               <span class="right">${statusHtml(d.status, d.statusText)}${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
             </li>`).join('');
+        staggerOnce(board);
     } catch (err) {
-        board.innerHTML = `<li class="muted">Couldn’t load departures. ${escapeHtml(err.message)}</li>`;
+        board.innerHTML = `<li class="empty">Departures aren’t loading right now. We’ll try again in 30 seconds.</li>`;
+        console.error('Failed to load departures:', err);
     }
 }
-$('station-select').addEventListener('change', (e) => {
-    state.station = e.target.value;
-    saveUrl();
-    loadBoard();
-});
+$('station-input').addEventListener('change', (e) => pickStation(e.target.value));
+$('station-input').addEventListener('focus', (e) => e.target.select());
 
 // ---------- Alerts ----------
+// "Read more" opens the full text; a line tag jumps to that line's trains
+$('alerts').addEventListener('click', (e) => {
+    const more = e.target.closest('.read-more');
+    if (more) {
+        const open = more.getAttribute('aria-expanded') !== 'true';
+        more.setAttribute('aria-expanded', String(open));
+        more.textContent = open ? 'Show less' : 'Read more';
+        more.closest('li').classList.toggle('open', open);
+        return;
+    }
+    const tag = e.target.closest('[data-line]');
+    if (tag) {
+        applyLine(tag.dataset.line);
+        showTab('trains');
+    }
+});
 async function loadAlerts() {
     const list = $('alerts');
     try {
         const { alerts } = await getJson('/api/alerts');
+        list.removeAttribute('aria-busy');
         $('alerts-count').textContent = alerts.length || '';
         if (alerts.length === 0) {
-            list.innerHTML = '<li class="muted">No rail alerts right now.</li>';
+            list.innerHTML = '<li class="empty">No rail alerts right now. Trains are running normally.</li>';
             return;
         }
         list.innerHTML = alerts.map((a) => {
@@ -422,11 +525,14 @@ async function loadAlerts() {
               <span class="effect">${escapeHtml(a.effect)}</span>
               ${a.url ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">${escapeHtml(a.header)}</a>` : `<b>${escapeHtml(a.header)}</b>`}
               <p>${escapeHtml(a.description)}</p>
-              ${shown.length ? `<div class="alert-lines">${shown.map((l) => `<span style="--c:${escapeHtml(l.color)};--tc:${textOn(l.color)}">${escapeHtml(l.name)}</span>`).join('')}${more > 0 ? `<span style="--c:var(--sand-2);--tc:var(--muted)">+${more}</span>` : ''}</div>` : ''}
+              ${a.description.length > 110 ? '<button type="button" class="link-btn read-more" aria-expanded="false">Read more</button>' : ''}
+              ${shown.length ? `<div class="alert-lines">${shown.map((l) => `<button type="button" data-line="${escapeHtml(l.name)}" title="Show ${escapeHtml(l.name)} trains" style="--c:${escapeHtml(l.color)};--tc:${textOn(l.color)}">${escapeHtml(l.name)}</button>`).join('')}${more > 0 ? `<span style="--c:var(--sand-2);--tc:var(--muted)">+${more} more</span>` : ''}</div>` : ''}
             </li>`;
         }).join('');
+        staggerOnce(list);
     } catch (err) {
-        list.innerHTML = `<li class="muted">Couldn’t load alerts. ${escapeHtml(err.message)}</li>`;
+        list.innerHTML = '<li class="empty">Alerts aren’t loading right now. We’ll try again in a few minutes.</li>';
+        console.error('Failed to load alerts:', err);
     }
 }
 

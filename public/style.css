@@ -291,3 +291,109 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .bell { opacity: 0; transition: opacity 120ms; }
 .stops li:hover .bell, .bell:focus-visible, .bell[aria-pressed="true"] { opacity: 1; }
 @media (hover: none) { .bell { opacity: 0.55; } }
+
+/* =========================================================
+   Motion (same rules as Focus Tracker)
+   Entrances ease out, moves ease in-out, exits are ~20% shorter. No bounce.
+   ========================================================= */
+:root {
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --ease-in: cubic-bezier(0.4, 0, 1, 1);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+@keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(0.95); } }
+@keyframes pop-out { to { opacity: 0; transform: translateY(6px) scale(0.95); } }
+@keyframes slide-in-right { from { opacity: 0; transform: translateX(24px) scale(0.97); } }
+@keyframes slide-out-right { to { opacity: 0; transform: translateX(24px) scale(0.97); } }
+@keyframes drop-in { from { opacity: 0; transform: translate(-50%, -10px); } }
+@keyframes drop-out { to { opacity: 0; transform: translate(-50%, -10px); } }
+@keyframes row-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--terracotta) 55%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
+
+/* 11/12, 1, 10, 15: the journey card comes in from the side you picked the train on (the list
+   is on the right) and leaves the same way, a little faster */
+.journey:not([hidden]) { animation: pop-in 220ms var(--ease-out); transform-origin: top right; }
+.journey.leaving { animation: pop-out 180ms var(--ease-in) forwards; }
+@media (min-width: 1000px) {
+    .journey:not([hidden]) { animation-name: slide-in-right; }
+    .journey.leaving { animation-name: slide-out-right; }
+}
+/* Banner drops from the top and goes back up */
+.banner:not([hidden]) { animation: drop-in 200ms var(--ease-out); }
+.banner.leaving { animation: drop-out 160ms var(--ease-in) forwards; }
+
+/* 16: switching tabs or stations crossfades the new content in */
+.view:not([hidden]) { animation: fade-in 200ms var(--ease-out); }
+
+/* 3, 6: list rows and journey stops settle in 30 ms apart (first time only) */
+.stagger > * { animation: row-in 260ms var(--ease-out) both; }
+.stagger > :nth-child(2) { animation-delay: 30ms; } .stagger > :nth-child(3) { animation-delay: 60ms; }
+.stagger > :nth-child(4) { animation-delay: 90ms; } .stagger > :nth-child(5) { animation-delay: 120ms; }
+.stagger > :nth-child(6) { animation-delay: 150ms; } .stagger > :nth-child(7) { animation-delay: 180ms; }
+.stagger > :nth-child(n + 8) { animation-delay: 210ms; }
+
+/* 4: rows and buttons press in slightly */
+.train, .tabs button, .icon-btn, .bell, .more-btn, .link-btn { transition: transform 100ms var(--ease-out), background-color 150ms, color 150ms, opacity 150ms; }
+.train:active { transform: scale(0.985); } /* wide rows: 0.97 looks like a jump, so a touch less */
+.tabs button:active, .icon-btn:active, .bell:active, .more-btn:active { transform: scale(0.97); }
+
+/* 9: the tab highlight slides between Trains / Next trains / Alerts */
+.tabs { position: relative; isolation: isolate; }
+.tabs::before {
+    content: ""; position: absolute; z-index: -1; top: 4px; bottom: 4px; left: 4px;
+    width: calc((100% - 8px - 8px) / 3); border-radius: 999px; background: var(--paper);
+    transform: translateX(calc(var(--tab, 0) * (100% + 4px)));
+    transition: transform 260ms var(--ease-in-out);
+}
+.tabs button[aria-selected="true"] { background: transparent; }
+
+/* 8: a soft ring when a reminder is set */
+.pulse { animation: ring 600ms var(--ease-out); }
+
+/* 18: the bell swaps colour smoothly */
+.bell svg { transition: transform 150ms var(--ease-out); }
+.bell[aria-pressed="true"] svg { transform: rotate(-12deg); }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- UI checklist pass ---------- */
+/* Skeleton rows while loading, instead of "Loading…" text */
+@keyframes shimmer { 0% { opacity: 0.55; } 50% { opacity: 1; } 100% { opacity: 0.55; } }
+.skeleton-row { height: 58px; background: var(--paper); position: relative; }
+.skeleton-row::before, .skeleton-row::after {
+    content: ""; position: absolute; left: 14px; height: 10px; border-radius: 6px; background: var(--sand-2);
+    animation: shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-row::before { top: 16px; width: 45%; }
+.skeleton-row::after { top: 34px; width: 28%; }
+.skeleton-row.tall { height: 92px; border-radius: 14px; }
+.alerts .skeleton-row.tall::after { top: 40px; width: 70%; }
+
+/* Empty and error states say what's going on and what to do next */
+.empty { padding: 16px 14px; color: var(--muted); line-height: 1.5; background: var(--paper); border-radius: 14px; }
+.train-list .empty, .board .empty { border-radius: 0; }
+
+/* Title Case labels, not ALL CAPS */
+.alerts .effect { text-transform: none; letter-spacing: 0; font-size: 0.78rem; }
+
+/* Station search: type or scroll */
+.station-input {
+    width: 100%; border: 0; border-radius: 14px; padding: 11px 12px;
+    background: var(--paper); color: var(--ink); font: inherit; font-weight: 700;
+}
+.field-error { margin: -4px 0 0; font-size: 0.85rem; color: var(--verylate); }
+.filter-note { margin: -4px 2px 0; font-size: 0.85rem; color: var(--gum); font-weight: 700; }
+.filter-note:empty { display: none; }
+
+/* Alerts: read more, and line tags that jump to that line */
+.alerts li.open p { -webkit-line-clamp: unset; display: block; }
+.read-more { padding: 4px 0 0; font-size: 0.85rem; }
+.alert-lines button, .alert-lines span {
+    font: inherit; font-size: 0.75rem; font-weight: 800; padding: 3px 9px; border: 0; border-radius: 999px;
+    background: var(--c); color: var(--tc, #fff); cursor: pointer;
+}
+.alert-lines span { cursor: default; }
+.alert-lines button:hover { filter: brightness(0.95); }
