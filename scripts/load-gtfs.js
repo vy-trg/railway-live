@@ -8,6 +8,7 @@ import path from 'node:path';
 import { parse } from 'csv-parse';
 import { pool } from '../db/pool.js';
 import { parseGtfsTime, parseGtfsDate } from '../schedule.js';
+import { simplify } from '../geo.js';
 
 const ROUTE_TYPES = new Set(['2']); // 2 = rail
 const BATCH = 2000;
@@ -39,7 +40,7 @@ const client = await pool.connect();
 try {
   await client.query(fs.readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8'));
   await client.query('BEGIN');
-  await client.query('TRUNCATE stop_times, trips, stops, stations, routes, calendar, calendar_dates CASCADE');
+  await client.query('TRUNCATE route_shapes, stop_times, trips, stops, stations, routes, calendar, calendar_dates CASCADE');
 
   const routes = [];
   for await (const r of rows('routes.txt')) {
@@ -51,8 +52,10 @@ try {
 
   const trips = [];
   const serviceIds = new Set();
+  const shapeRoute = new Map(); // shape_id -> route_id
   for await (const t of rows('trips.txt')) {
     if (!routeIds.has(t.route_id)) continue;
+    if (t.shape_id) shapeRoute.set(t.shape_id, t.route_id);
     trips.push([t.trip_id, t.route_id, t.service_id, t.trip_headsign, t.direction_id === '' ? null : Number(t.direction_id)]);
     serviceIds.add(t.service_id);
   }
@@ -81,6 +84,24 @@ try {
     return [id, s.stop_name, Number(s.stop_lat), Number(s.stop_lon)];
   });
 
+  // Track shapes: for each route keep its longest shape (the full line), simplified to ~10 m
+  const shapePoints = new Map();
+  for await (const p of rows('shapes.txt')) {
+    if (!shapeRoute.has(p.shape_id)) continue;
+    if (!shapePoints.has(p.shape_id)) shapePoints.set(p.shape_id, []);
+    shapePoints.get(p.shape_id).push([Number(p.shape_pt_sequence), Number(p.shape_pt_lat), Number(p.shape_pt_lon)]);
+  }
+  const longest = new Map();
+  for (const [shapeId, pts] of shapePoints) {
+    const routeId = shapeRoute.get(shapeId);
+    if (!longest.has(routeId) || pts.length > longest.get(routeId).length) longest.set(routeId, pts);
+  }
+  const routeShapes = [...longest].map(([routeId, pts]) => {
+    const line = pts.sort((a, b) => a[0] - b[0]).map(([, lat, lng]) => [lat, lng]);
+    const coords = simplify(line, 0.0001).map(([lat, lng]) => [Math.round(lat * 1e5) / 1e5, Math.round(lng * 1e5) / 1e5]);
+    return [routeId, JSON.stringify(coords)];
+  });
+
   const calendar = [];
   for await (const c of rows('calendar.txt')) {
     if (!serviceIds.has(c.service_id)) continue;
@@ -103,6 +124,7 @@ try {
     await client.query('INSERT INTO calendar (service_id, days, start_date, end_date) VALUES ($1, $2::boolean[], $3, $4)', c);
   }
   console.log(`  calendar: ${calendar.length} rows`);
+  await insertMany(client, 'route_shapes', ['route_id', 'coords'], ['text', 'jsonb'], routeShapes);
   await insertMany(client, 'calendar_dates', ['service_id', 'date', 'exception_type'], ['text', 'date', 'int2'], calendarDates);
 
   await client.query('COMMIT');

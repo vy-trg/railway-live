@@ -30,3 +30,11 @@ test('delay levels: on time up to 1 min, late up to 5, then very late', () => {
     assert.equal(delayLevel(-120), 'ontime');
     assert.equal(delayLevel(null), 'unknown');
 });
+
+import { simplify } from '../geo.js';
+
+test('simplify keeps the ends and the corners, drops points on a straight line', () => {
+    const line = [[0, 0], [0, 1], [0, 2], [0, 3], [1, 3], [2, 3]];
+    assert.deepEqual(simplify(line, 0.01), [[0, 0], [0, 3], [2, 3]]);
+    assert.deepEqual(simplify([[0, 0], [1, 1]], 0.01), [[0, 0], [1, 1]]);
+});

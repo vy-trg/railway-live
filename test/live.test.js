@@ -75,3 +75,19 @@ test('Brisbane clock is UTC+10 all year', () => {
     assert.equal(formatClock(81310), '10:35 pm');
     assert.equal(formatClock(86400 + 600), '12:10 am');
 });
+
+import { buildTripProgress } from '../live.js';
+
+test('journey panel marks passed, next and skipped stops', () => {
+    const stops = [
+        { stop_sequence: 1, departure_secs: 100, name: 'Springfield Central station', platform: '1' },
+        { stop_sequence: 2, departure_secs: 200, name: 'Springfield station', platform: '2' },
+        { stop_sequence: 3, departure_secs: 300, name: 'Richlands station', platform: '1' },
+        { stop_sequence: 4, departure_secs: 400, name: 'Darra station', platform: '3' },
+    ];
+    const tu = { stops: [{ sequence: 2, delay: 120, skipped: false }, { sequence: 3, delay: 120, skipped: true }] };
+    const progress = buildTripProgress(stops, tu, 250, 0);
+    assert.deepEqual(progress.map((p) => p.state), ['passed', 'next', 'skipped', 'upcoming']);
+    assert.equal(progress[0].name, 'Springfield Central');
+    assert.equal(progress[1].expected, '12:05 am'); // 200 s + 2 min late
+});

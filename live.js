@@ -106,3 +106,27 @@ export function railAlerts(alerts, { routeIds, stopIds, stationIds, lines }, now
         }))
         .sort((a, b) => Number(b.severe) - Number(a.severe));
 }
+
+// Every stop of one trip for the "journey" panel: passed stops, the next stop, and the rest,
+// each with its scheduled time and (when known) the expected time.
+// serviceStartEpoch = midnight (Brisbane) of the trip's service day, in epoch seconds.
+export function buildTripProgress(stops, tripUpdate, nowSec, serviceStartEpoch) {
+    let nextFound = false;
+    return stops.map((s) => {
+        const { delay, skipped } = delayAtStop(tripUpdate, s.stop_sequence);
+        const scheduledEpoch = serviceStartEpoch + s.departure_secs;
+        const expectedEpoch = scheduledEpoch + (delay ?? 0);
+        let state = 'upcoming';
+        if (skipped) state = 'skipped';
+        else if (expectedEpoch < nowSec - 30) state = 'passed';
+        else if (!nextFound) { state = 'next'; nextFound = true; }
+        return {
+            name: s.name.replace(/ station$/, ''),
+            platform: s.platform,
+            scheduled: formatClock(s.departure_secs),
+            expected: delay === null || Math.abs(delay) < 60 ? null : formatClock(s.departure_secs + delay),
+            delaySec: delay,
+            state,
+        };
+    });
+}

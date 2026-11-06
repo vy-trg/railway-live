@@ -3,7 +3,7 @@ import { isActive } from './feed.js';
 import { getVehicles, getTripUpdates, getAlerts, nowSec } from './realtime.js';
 import * as db from './db/queries.js';
 import { buildLines } from './lines.js';
-import { enrichTrains, summarize, buildBoard, railAlerts } from './live.js';
+import { enrichTrains, summarize, buildBoard, railAlerts, buildTripProgress } from './live.js';
 import { brisbaneClock } from './schedule.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -38,6 +38,8 @@ app.use('/api', rateLimit({
 
 // Serve the map page from the same origin as the API (no CORS needed)
 app.use(express.static('public'));
+// The Nunito font is installed from npm and served from here, so no outside font service is needed
+app.use('/fonts/nunito', express.static('node_modules/@fontsource-variable/nunito/files', { maxAge: '30d' }));
 
 // --- Timetable data that never changes while the app runs: load once, then keep in memory ---
 let staticData = null;
@@ -124,6 +126,41 @@ app.get('/api/departures', handle(async (req, res) => {
         station,
         stale: updates.stale,
         departures: buildBoard(rows, updates.data, clock.secs).slice(0, 8),
+    });
+}));
+
+// Coloured track lines for the map. The timetable doesn't change while the app runs,
+// so browsers may keep this for an hour.
+let shapesJson = null;
+app.get('/api/shapes', handle(async (req, res) => {
+    if (!shapesJson) {
+        const rows = await db.getRouteShapes();
+        shapesJson = JSON.stringify(rows.map((r) => ({ routeId: r.route_id, color: `#${r.color}`, coords: r.coords })));
+    }
+    res.set('Cache-Control', 'public, max-age=3600').type('json').send(shapesJson);
+}));
+
+// One train's journey: every stop with scheduled and expected times
+app.get('/api/trips/:tripId', handle(async (req, res) => {
+    const tripId = req.params.tripId;
+    const [trips, stops] = await Promise.all([db.getTrips([tripId]), db.getTripStops(tripId)]);
+    const trip = trips.get(tripId);
+    if (!trip || stops.length === 0) {
+        return res.status(404).json({ error: 'Trip not found' });
+    }
+    const [updates, now] = await Promise.all([getTripUpdates(), nowSec()]);
+    // The service day started at midnight Brisbane time; a trip still running after midnight
+    // belongs to yesterday's service day (its times are past 24:00).
+    const clock = brisbaneClock(now);
+    let dayStart = now - clock.secs;
+    if (clock.secs < stops[0].departure_secs - 3600 * 4) dayStart -= 86400;
+    res.json({
+        tripId,
+        routeName: trip.long_name,
+        headsign: trip.headsign.replace(/ station$/, ''),
+        color: `#${trip.color}`,
+        textColor: `#${trip.text_color}`,
+        stops: buildTripProgress(stops, updates.data.get(tripId), now, dayStart),
     });
 }));
 

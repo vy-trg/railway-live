@@ -69,3 +69,25 @@ export async function getDepartures(stationId, date, fromSecs, toSecs, limit = 1
   );
   return rows;
 }
+
+export async function getRouteShapes() {
+  const { rows } = await pool.query(
+    'SELECT s.route_id, r.color, s.coords FROM route_shapes s JOIN routes r ON r.route_id = s.route_id'
+  );
+  return rows;
+}
+
+// Every stop of one trip in order, with station names and scheduled times (seconds after midnight)
+export async function getTripStops(tripId) {
+  const { rows } = await pool.query(
+    `SELECT st.stop_sequence, st.stop_id, st.arrival_secs, st.departure_secs,
+            COALESCE(sta.name, s.name) AS name, s.platform
+     FROM stop_times st
+     JOIN stops s ON s.stop_id = st.stop_id
+     LEFT JOIN stations sta ON sta.station_id = s.station_id
+     WHERE st.trip_id = $1
+     ORDER BY st.stop_sequence`,
+    [tripId]
+  );
+  return rows;
+}

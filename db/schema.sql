@@ -57,3 +57,9 @@ CREATE TABLE IF NOT EXISTS calendar_dates (
   exception_type SMALLINT NOT NULL,   -- 1 = added, 2 = removed
   PRIMARY KEY (service_id, date)
 );
+
+-- One simplified track shape per route, for drawing coloured lines on the map
+CREATE TABLE IF NOT EXISTS route_shapes (
+  route_id TEXT PRIMARY KEY REFERENCES routes(route_id) ON DELETE CASCADE,
+  coords   JSONB NOT NULL               -- [[lat, lng], ...]
+);

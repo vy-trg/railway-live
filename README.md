@@ -23,7 +23,8 @@ Railway Live puts a thin server in between: it fetches and decodes the feed **at
 
 ## Features
 
-- **Live map:** every train, refreshed every 30 seconds. The fill shows how late it is (green on time, amber 2–5 min, red 5+), the ring is the line's official TransLink colour, and the popup says the route, destination, next stop and delay in words.
+- **Live map:** every train on track lines drawn in each route's TransLink colour (from GTFS `shapes.txt`, simplified with Douglas–Peucker), refreshed every 30 seconds. The dot shows how late it is: green on time, amber 2–5 min, red 5+.
+- **Journey card:** pick a train to see every stop with scheduled and expected times; passed stops are crossed out and folded away, skipped stops are marked.
 - **Next trains** from any station (Springfield Central by default): scheduled time, expected time when late, platform and status, including cancelled and skipped stops.
 - **Network numbers** worked out from the live feed: trains running, share on time, average delay of late trains, and the route that is furthest behind right now.
 - **Rail alerts** from TransLink's Alerts feed (track closures, lift outages, timetable changes), with the lines they affect.
@@ -38,7 +39,7 @@ Railway Live puts a thin server in between: it fetches and decodes the feed **at
 |---|---|
 | Server | Node.js 22+, Express 5 |
 | Data | TransLink GTFS (timetable) in PostgreSQL; GTFS-RT VehiclePositions, TripUpdates and Alerts decoded with `gtfs-realtime-bindings` |
-| Frontend | HTML, CSS, vanilla JavaScript |
+| Frontend | HTML, CSS, vanilla JavaScript, Nunito (self-hosted) |
 | Map | Leaflet 1.9, OpenStreetMap tiles |
 
 ---
@@ -66,6 +67,8 @@ Browser  --every 30s-->  /api/trains, /api/summary, /api/departures  -->  30s ca
 | `GET` | `/api/summary` | `{ running, onTimePercent, avgLateMinutes, mostDelayed }` |
 | `GET` | `/api/departures?station=place_spcsta` | Next 8 departures in the next 2 hours, with live delays. `400` for an unknown station |
 | `GET` | `/api/alerts` | Current rail alerts with the lines they affect |
+| `GET` | `/api/trips/:tripId` | One train's stops with scheduled and expected times, and which are passed, next or skipped |
+| `GET` | `/api/shapes` | Simplified track line per route, for the map (cached for an hour) |
 | `GET` | `/api/lines`, `/api/stations` | Lines (name, colour, routes) and stations for the filter and the board |
 | `GET` | `/api/health` | `{ ok: true }` |
 

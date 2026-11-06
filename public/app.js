@@ -11,49 +11,80 @@ function escapeHtml(value) {
     ));
 }
 
+// Dark or light text, whichever reads better on a given line colour
+function textOn(hex) {
+    const n = parseInt(String(hex).replace('#', ''), 16);
+    const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#1d1d1d' : '#ffffff';
+}
+
 async function getJson(url) {
     const response = await fetch(url);
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `Server error ${response.status}`);
+    // Error responses (e.g. 429 from the rate limiter) may be plain text, not JSON
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || (response.status === 429 ? 'Too many requests, try again in a minute' : `Server error ${response.status}`));
     return data;
 }
 
-// ---------- URL state: ?line=Springfield&station=place_spcsta, so a view can be shared ----------
+// ---------- URL state (?line=Springfield&station=...&tab=board) so a view can be shared ----------
 const params = new URLSearchParams(location.search);
 const state = {
     line: params.get('line') || '',
     station: params.get('station') || DEFAULT_STATION,
+    tab: ['trains', 'board', 'alerts'].includes(params.get('tab')) ? params.get('tab') : 'trains',
+    selected: null, // trip id of the train whose journey is open
 };
 function saveUrl() {
     const p = new URLSearchParams();
     if (state.line) p.set('line', state.line);
     if (state.station !== DEFAULT_STATION) p.set('station', state.station);
+    if (state.tab !== 'trains') p.set('tab', state.tab);
     history.replaceState(null, '', p.toString() ? `?${p}` : location.pathname);
 }
 
+// ---------- Tabs ----------
+const TABS = ['trains', 'board', 'alerts'];
+function showTab(name) {
+    state.tab = name;
+    for (const t of TABS) {
+        $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
+        $(`view-${t}`).hidden = t !== name;
+    }
+    saveUrl();
+}
+for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
+
 // ---------- Map ----------
-const map = L.map('map').setView([-27.5, 152.98], 10);
+const map = L.map('map', { zoomControl: false }).setView([-27.5, 152.98], 10);
+L.control.zoom({ position: 'topleft' }).addTo(map);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         + ' · <a href="https://translink.com.au/about-translink/open-data">TransLink</a> (CC BY 4.0)',
 }).addTo(map);
 
-const LEVEL_COLOURS = { ontime: '--ontime', late: '--late', verylate: '--verylate', unknown: '--muted' };
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const LEVEL_VARS = { ontime: '--ontime', late: '--late', verylate: '--verylate', unknown: '--muted' };
+
+// Track lines in each route's TransLink colour, with a pale casing so they read on any tile
+async function drawTracks() {
+    try {
+        const shapes = await getJson('/api/shapes');
+        const casing = L.layerGroup().addTo(map);
+        const lines = L.layerGroup().addTo(map);
+        for (const s of shapes) {
+            L.polyline(s.coords, { color: '#fffaf3', weight: 6, opacity: 0.9, interactive: false }).addTo(casing);
+            L.polyline(s.coords, { color: s.color, weight: 3, opacity: 0.9, interactive: false }).addTo(lines);
+        }
+    } catch (err) {
+        console.error('Failed to load track lines:', err);
+    }
+}
 
 // One marker per train id, so a refresh moves markers instead of duplicating them
 const trainMarkers = new Map();
 let lines = [];
 let lastTrains = [];
-
-function popupHtml(t) {
-    return `<span class="popup-line" style="background:${escapeHtml(t.color)};color:${escapeHtml(t.textColor)}">${escapeHtml(t.routeName)}</span><br>`
-        + (t.headsign ? `<b>To ${escapeHtml(t.headsign)}</b><br>` : '')
-        + (t.nextStop ? `Next stop: ${escapeHtml(t.nextStop)}<br>` : '')
-        // Always the number in words, so colour is never the only signal
-        + `${escapeHtml(t.delayText)}`;
-}
 
 function routeVisible(train) {
     if (!state.line) return true;
@@ -61,23 +92,34 @@ function routeVisible(train) {
     return !line || line.routeIds.includes(train.routeId);
 }
 
-function drawTrains(trains) {
+function markerStyle(t) {
+    const selected = t.tripId === state.selected;
+    return {
+        radius: selected ? 10 : 7,
+        weight: selected ? 4 : 3,
+        color: '#fffaf3', // white ring keeps every dot readable on top of the coloured tracks
+        fillColor: cssVar(LEVEL_VARS[t.level] ?? '--muted'),
+        fillOpacity: 1,
+    };
+}
+
+function drawTrains() {
     const seen = new Set();
-    for (const t of trains) {
+    for (const t of lastTrains) {
         if (!routeVisible(t)) continue;
         seen.add(t.id);
-        const style = {
-            radius: 7, weight: 3,
-            color: t.color, // ring: the line's own colour
-            fillColor: cssVar(LEVEL_COLOURS[t.level] ?? '--muted'), // fill: how late it is
-            fillOpacity: 0.95,
-        };
+        const tip = `${t.headsign ? `To ${t.headsign}` : t.routeName} · ${t.delayText}`;
         const marker = trainMarkers.get(t.id);
         if (marker) {
-            marker.setLatLng([t.lat, t.lng]).setStyle(style).setPopupContent(popupHtml(t));
+            marker.setLatLng([t.lat, t.lng]).setStyle(markerStyle(t)).setTooltipContent(escapeHtml(tip));
         } else {
-            trainMarkers.set(t.id, L.circleMarker([t.lat, t.lng], style).addTo(map).bindPopup(popupHtml(t)));
+            const m = L.circleMarker([t.lat, t.lng], markerStyle(t)).addTo(map)
+                .bindTooltip(escapeHtml(tip), { direction: 'top', offset: [0, -8] });
+            m.on('click', () => selectTrain(m.trainTripId));
+            trainMarkers.set(t.id, m);
         }
+        trainMarkers.get(t.id).trainTripId = t.tripId;
+        if (t.tripId === state.selected) trainMarkers.get(t.id).bringToFront();
     }
     for (const [id, marker] of trainMarkers) {
         if (!seen.has(id)) {
@@ -86,6 +128,106 @@ function drawTrains(trains) {
         }
     }
 }
+
+// ---------- Train list ----------
+const LEVEL_ORDER = { verylate: 0, late: 1, ontime: 2, unknown: 3 };
+const LIST_STEP = 12;
+let listLimit = LIST_STEP;
+function renderTrainList() {
+    const list = $('train-list');
+    const trains = lastTrains.filter(routeVisible)
+        // Late trains first: that's what someone checking the network wants to know
+        .sort((a, b) => (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || (b.delaySec ?? 0) - (a.delaySec ?? 0));
+    if (trains.length === 0) {
+        list.innerHTML = `<li class="muted">${state.line ? `No ${escapeHtml(state.line)} trains running right now.` : 'No trains running right now.'}</li>`;
+        return;
+    }
+    const hidden = trains.length - listLimit;
+    list.innerHTML = trains.slice(0, listLimit).map((t) => `
+        <li><button class="train" type="button" data-trip="${escapeHtml(t.tripId)}" aria-pressed="${t.tripId === state.selected}" style="--c:${escapeHtml(t.color)}">
+          <span class="bar"></span>
+          <span class="to">To ${escapeHtml(t.headsign ?? 'unknown')}</span>
+          <span class="chip ${escapeHtml(t.level)}">${escapeHtml(t.delayText)}</span>
+          <span class="meta">${escapeHtml(t.routeName)}${t.nextStop ? ` · next ${escapeHtml(t.nextStop)}` : ''}</span>
+        </button></li>`).join('')
+        + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more trains</button></li>` : '');
+}
+$('train-list').addEventListener('click', (e) => {
+    if (e.target.closest('[data-more]')) {
+        listLimit = Infinity;
+        renderTrainList();
+        return;
+    }
+    const button = e.target.closest('[data-trip]');
+    if (button) selectTrain(button.dataset.trip);
+});
+
+// ---------- Journey card ----------
+let showAllStops = false;
+$('journey-stops').addEventListener('click', (e) => {
+    if (e.target.closest('[data-unfold]')) {
+        showAllStops = true;
+        loadJourney();
+    }
+});
+
+async function selectTrain(tripId) {
+    state.selected = tripId;
+    showAllStops = false;
+    const train = lastTrains.find((t) => t.tripId === tripId);
+    if (train) map.flyTo([train.lat, train.lng], Math.max(map.getZoom(), 12), { duration: 0.6 });
+    drawTrains();
+    renderTrainList();
+    await loadJourney();
+}
+
+async function loadJourney() {
+    if (!state.selected) return;
+    const card = $('journey');
+    try {
+        const j = await getJson(`/api/trips/${encodeURIComponent(state.selected)}`);
+        const pill = $('journey-line');
+        pill.textContent = j.routeName;
+        pill.style.background = j.color;
+        pill.style.color = j.textColor;
+        $('journey-title').textContent = `To ${j.headsign}`;
+        const next = j.stops.find((s) => s.state === 'next');
+        $('journey-sub').textContent = next
+            ? `Next stop ${next.name}${next.expected ? `, expected ${next.expected}` : ` at ${next.scheduled}`}`
+            : 'Journey finished';
+        const stops = $('journey-stops');
+        stops.style.setProperty('--c', j.color);
+        // Stops already passed are folded away except the last one, so the card stays short
+        const passed = j.stops.filter((s) => s.state === 'passed').length;
+        const folded = showAllStops ? 0 : Math.max(0, passed - 1);
+        stops.innerHTML = (folded ? `<li class="fold"><button type="button" class="link-btn" data-unfold>${folded} earlier stop${folded === 1 ? '' : 's'}</button></li>` : '')
+            + j.stops.slice(folded).map((s) => `
+            <li class="${s.state}">
+              <span class="name">${escapeHtml(s.name)}</span>
+              <span class="time">${s.expected ? `<s>${escapeHtml(s.scheduled)}</s>${escapeHtml(s.expected)}` : escapeHtml(s.scheduled)}</span>
+              ${s.state === 'skipped' ? '<span class="sub">Not stopping</span>' : s.platform && s.state === 'next' ? `<span class="sub">Platform ${escapeHtml(s.platform)}</span>` : ''}
+            </li>`).join('');
+        card.hidden = false;
+        // Keep the next stop in view inside the card
+        if (window.innerWidth < 1000 && !card.dataset.shown) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        card.dataset.shown = '1';
+    } catch (err) {
+        console.error('Failed to load journey:', err);
+        card.hidden = true;
+    }
+}
+
+function closeJourney() {
+    state.selected = null;
+    $('journey').hidden = true;
+    delete $('journey').dataset.shown;
+    drawTrains();
+    renderTrainList();
+}
+$('journey-close').addEventListener('click', closeJourney);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.selected) closeJourney();
+});
 
 // ---------- Feed status pill ----------
 let lastUpdated = null;
@@ -101,9 +243,7 @@ function renderFeedStatus() {
     if (!lastUpdated) return;
     const seconds = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
     const age = seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)} min ago`;
-    text.textContent = feedState === 'stale'
-        ? `TransLink feed unavailable · showing data from ${age}`
-        : `Live · TransLink · updated ${age}`;
+    text.textContent = feedState === 'stale' ? `TransLink feed down · data from ${age}` : `Live · updated ${age}`;
 }
 setInterval(renderFeedStatus, 5000);
 
@@ -112,10 +252,12 @@ async function loadLive() {
     try {
         const [trains, summary] = await Promise.all([getJson('/api/trains'), getJson('/api/summary')]);
         lastTrains = trains.trains;
-        drawTrains(lastTrains);
+        drawTrains();
+        renderTrainList();
         lastUpdated = new Date(trains.updatedAt).getTime();
         feedState = trains.stale ? 'stale' : 'live';
         renderSummary(summary);
+        if (state.selected) loadJourney();
     } catch (err) {
         console.error('Failed to load trains:', err);
         feedState = 'down';
@@ -125,18 +267,13 @@ async function loadLive() {
 
 function renderSummary(s) {
     $('kpi-running').textContent = s.running;
-    $('kpi-running-sub').textContent = `${s.withDelayInfo} with live times`;
     const onTime = $('kpi-ontime');
     onTime.textContent = s.onTimePercent === null ? '–' : `${s.onTimePercent}%`;
     onTime.className = s.onTimePercent === null ? '' : s.onTimePercent >= 90 ? 'good' : s.onTimePercent >= 75 ? 'warn' : 'bad';
-    $('kpi-delay').textContent = s.avgLateMinutes ? `${s.avgLateMinutes} min` : '0 min';
-    if (s.mostDelayed) {
-        $('kpi-worst').textContent = s.mostDelayed.name;
-        $('kpi-worst-sub').textContent = `about ${s.mostDelayed.minutes} min behind`;
-    } else {
-        $('kpi-worst').textContent = 'None';
-        $('kpi-worst-sub').textContent = 'every line within a minute';
-    }
+    $('kpi-delay').textContent = `${s.avgLateMinutes || 0} min`;
+    $('kpi-worst').textContent = s.mostDelayed
+        ? `${s.mostDelayed.name} · ${s.mostDelayed.minutes} min`
+        : 'Nothing, all within a minute';
 }
 
 // ---------- Line filter ----------
@@ -154,12 +291,13 @@ function applyLine(name) {
     $('line-filter').value = state.line;
     $('line-clear').hidden = !state.line;
     saveUrl();
-    drawTrains(lastTrains);
+    drawTrains();
+    renderTrainList();
 }
 $('line-filter').addEventListener('change', (e) => applyLine(e.target.value));
 $('line-clear').addEventListener('click', () => applyLine(''));
 
-// ---------- Departure board ----------
+// ---------- Next trains ----------
 async function loadStations() {
     const stations = await getJson('/api/stations');
     if (!stations.some((s) => s.id === state.station)) state.station = DEFAULT_STATION;
@@ -169,22 +307,21 @@ async function loadStations() {
 }
 
 async function loadBoard() {
-    const body = $('board-rows');
+    const board = $('board');
     try {
         const { departures } = await getJson(`/api/departures?station=${encodeURIComponent(state.station)}`);
         if (departures.length === 0) {
-            body.innerHTML = '<tr><td colspan="4" class="muted">No trains in the next 2 hours.</td></tr>';
+            board.innerHTML = '<li class="muted">No trains in the next 2 hours.</li>';
             return;
         }
-        body.innerHTML = departures.map((d) => `
-            <tr class="${d.status === 'cancelled' ? 'cancelled' : ''}">
-              <td class="time">${d.expected ? `<s>${escapeHtml(d.scheduled)}</s>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</td>
-              <td class="to"><b>${escapeHtml(d.headsign)}</b><span style="--c:${escapeHtml(d.color)}">${escapeHtml(d.routeName)}</span></td>
-              <td class="plat">${escapeHtml(d.platform ?? '–')}</td>
-              <td><span class="status ${escapeHtml(d.status)}">${escapeHtml(d.statusText)}</span></td>
-            </tr>`).join('');
+        board.innerHTML = departures.map((d) => `
+            <li class="${d.status === 'cancelled' ? 'cancelled' : ''}">
+              <span class="time">${d.expected ? `<small>${escapeHtml(d.scheduled)}</small>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</span>
+              <span><span class="to">${escapeHtml(d.headsign)}</span><span class="route" style="--c:${escapeHtml(d.color)}">${escapeHtml(d.routeName)}</span></span>
+              <span class="right"><span class="chip ${escapeHtml(d.status)}">${escapeHtml(d.statusText)}</span>${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
+            </li>`).join('');
     } catch (err) {
-        body.innerHTML = `<tr><td colspan="4" class="muted">Couldn’t load departures. ${escapeHtml(err.message)}</td></tr>`;
+        board.innerHTML = `<li class="muted">Couldn’t load departures. ${escapeHtml(err.message)}</li>`;
     }
 }
 $('station-select').addEventListener('change', (e) => {
@@ -198,20 +335,20 @@ async function loadAlerts() {
     const list = $('alerts');
     try {
         const { alerts } = await getJson('/api/alerts');
-        $('alerts-count').textContent = alerts.length ? `${alerts.length} active` : '';
+        $('alerts-count').textContent = alerts.length || '';
         if (alerts.length === 0) {
             list.innerHTML = '<li class="muted">No rail alerts right now.</li>';
             return;
         }
         list.innerHTML = alerts.map((a) => {
-            const shown = a.lines.slice(0, 4);
+            const shown = a.lines.slice(0, 5);
             const more = a.lines.length - shown.length;
             return `
             <li class="${a.severe ? 'severe' : ''}">
-              <div class="head"><span class="effect">${escapeHtml(a.effect)}</span>
-                ${a.url ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">${escapeHtml(a.header)}</a>` : `<b>${escapeHtml(a.header)}</b>`}</div>
+              <span class="effect">${escapeHtml(a.effect)}</span>
+              ${a.url ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">${escapeHtml(a.header)}</a>` : `<b>${escapeHtml(a.header)}</b>`}
               <p>${escapeHtml(a.description)}</p>
-              ${shown.length ? `<div class="chips">${shown.map((l) => `<span class="chip" style="--c:${escapeHtml(l.color)}">${escapeHtml(l.name)}</span>`).join('')}${more > 0 ? `<span class="chip" style="--c:var(--line)">+${more} more</span>` : ''}</div>` : ''}
+              ${shown.length ? `<div class="alert-lines">${shown.map((l) => `<span style="--c:${escapeHtml(l.color)};--tc:${textOn(l.color)}">${escapeHtml(l.name)}</span>`).join('')}${more > 0 ? `<span style="--c:var(--sand-2);--tc:var(--muted)">+${more}</span>` : ''}</div>` : ''}
             </li>`;
         }).join('');
     } catch (err) {
@@ -221,6 +358,8 @@ async function loadAlerts() {
 
 // ---------- Start ----------
 async function start() {
+    showTab(state.tab);
+    drawTracks();
     try {
         await Promise.all([loadLines(), loadStations()]);
     } catch (err) {
