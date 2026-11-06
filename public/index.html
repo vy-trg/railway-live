@@ -69,19 +69,23 @@
                     <datalist id="line-list"></datalist>
                     <button id="line-clear" type="button" class="link-btn" hidden>Clear</button>
                 </div>
-                <ul id="train-list" class="train-list"><li class="muted">Loading trains…</li></ul>
+                <p id="filter-note" class="filter-note" role="status"></p>
+                <ul id="train-list" class="train-list" aria-busy="true"><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li></ul>
             </section>
 
             <!-- Next trains from one station -->
             <section id="view-board" class="view" role="tabpanel" aria-labelledby="tab-board" hidden>
-                <label class="field-label" for="station-select">Departures from</label>
-                <select id="station-select"></select>
-                <ul id="board" class="board"><li class="muted">Loading timetable…</li></ul>
+                <!-- Type to search or scroll the list: 154 stations is too many for a plain dropdown -->
+                <label class="field-label" for="station-input">Departures from</label>
+                <input id="station-input" class="station-input" list="station-list" autocomplete="off" placeholder="Type a station, e.g. Roma Street">
+                <datalist id="station-list"></datalist>
+                <p id="station-error" class="field-error" role="alert" hidden></p>
+                <ul id="board" class="board" aria-busy="true"><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li></ul>
             </section>
 
             <!-- Rail alerts -->
             <section id="view-alerts" class="view" role="tabpanel" aria-labelledby="tab-alerts" hidden>
-                <ul id="alerts" class="alerts"><li class="muted">Loading…</li></ul>
+                <ul id="alerts" class="alerts" aria-busy="true"><li class="skeleton-row tall" aria-hidden="true"></li><li class="skeleton-row tall" aria-hidden="true"></li><li class="skeleton-row tall" aria-hidden="true"></li></ul>
             </section>
 
             <footer class="foot">

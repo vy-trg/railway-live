@@ -358,3 +358,42 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- UI checklist pass ---------- */
+/* Skeleton rows while loading, instead of "Loading…" text */
+@keyframes shimmer { 0% { opacity: 0.55; } 50% { opacity: 1; } 100% { opacity: 0.55; } }
+.skeleton-row { height: 58px; background: var(--paper); position: relative; }
+.skeleton-row::before, .skeleton-row::after {
+    content: ""; position: absolute; left: 14px; height: 10px; border-radius: 6px; background: var(--sand-2);
+    animation: shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-row::before { top: 16px; width: 45%; }
+.skeleton-row::after { top: 34px; width: 28%; }
+.skeleton-row.tall { height: 92px; border-radius: 14px; }
+.alerts .skeleton-row.tall::after { top: 40px; width: 70%; }
+
+/* Empty and error states say what's going on and what to do next */
+.empty { padding: 16px 14px; color: var(--muted); line-height: 1.5; background: var(--paper); border-radius: 14px; }
+.train-list .empty, .board .empty { border-radius: 0; }
+
+/* Title Case labels, not ALL CAPS */
+.alerts .effect { text-transform: none; letter-spacing: 0; font-size: 0.78rem; }
+
+/* Station search: type or scroll */
+.station-input {
+    width: 100%; border: 0; border-radius: 14px; padding: 11px 12px;
+    background: var(--paper); color: var(--ink); font: inherit; font-weight: 700;
+}
+.field-error { margin: -4px 0 0; font-size: 0.85rem; color: var(--verylate); }
+.filter-note { margin: -4px 2px 0; font-size: 0.85rem; color: var(--gum); font-weight: 700; }
+.filter-note:empty { display: none; }
+
+/* Alerts: read more, and line tags that jump to that line */
+.alerts li.open p { -webkit-line-clamp: unset; display: block; }
+.read-more { padding: 4px 0 0; font-size: 0.85rem; }
+.alert-lines button, .alert-lines span {
+    font: inherit; font-size: 0.75rem; font-weight: 800; padding: 3px 9px; border: 0; border-radius: 999px;
+    background: var(--c); color: var(--tc, #fff); cursor: pointer;
+}
+.alert-lines span { cursor: default; }
+.alert-lines button:hover { filter: brightness(0.95); }

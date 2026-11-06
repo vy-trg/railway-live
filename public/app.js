@@ -191,12 +191,15 @@ const LEVEL_ORDER = { verylate: 0, late: 1, ontime: 2, unknown: 3 };
 const LIST_STEP = 12;
 let listLimit = LIST_STEP;
 function renderTrainList() {
+    $('train-list').removeAttribute('aria-busy');
     const list = $('train-list');
     const trains = lastTrains.filter(routeVisible)
         // Late trains first: that's what someone checking the network wants to know
         .sort((a, b) => (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || (b.delaySec ?? 0) - (a.delaySec ?? 0));
     if (trains.length === 0) {
-        list.innerHTML = `<li class="muted">${state.line ? `No ${escapeHtml(state.line)} trains running right now.` : 'No trains running right now.'}</li>`;
+        list.innerHTML = state.line
+            ? `<li class="empty">No ${escapeHtml(state.line)} trains are running right now. <button type="button" class="link-btn" data-clear-line>Show all lines</button></li>`
+            : '<li class="empty">No trains are running right now. Services usually start again around 5am.</li>';
         return;
     }
     const hidden = trains.length - listLimit;
@@ -209,8 +212,15 @@ function renderTrainList() {
         </button></li>`).join('')
         + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more trains</button></li>` : '');
     staggerOnce(list);
+    // Say what the filter did, e.g. "Showing 6 Springfield trains"
+    $('filter-note').textContent = state.line && trains.length
+        ? `Showing ${trains.length} ${state.line} train${trains.length === 1 ? '' : 's'}` : '';
 }
 $('train-list').addEventListener('click', (e) => {
+    if (e.target.closest('[data-clear-line]')) {
+        applyLine('');
+        return;
+    }
     if (e.target.closest('[data-more]')) {
         listLimit = Infinity;
         renderTrainList();
@@ -428,20 +438,40 @@ $('line-filter').addEventListener('change', (e) => applyLine(e.target.value));
 $('line-clear').addEventListener('click', () => applyLine(''));
 
 // ---------- Next trains ----------
+let stations = [];
 async function loadStations() {
-    const stations = await getJson('/api/stations');
+    stations = await getJson('/api/stations');
     if (!stations.some((s) => s.id === state.station)) state.station = DEFAULT_STATION;
-    $('station-select').innerHTML = stations
-        .map((s) => `<option value="${escapeHtml(s.id)}"${s.id === state.station ? ' selected' : ''}>${escapeHtml(s.name)}</option>`)
-        .join('');
+    $('station-list').innerHTML = stations.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
+    $('station-input').value = stations.find((s) => s.id === state.station)?.name ?? '';
+}
+
+function pickStation(text) {
+    const typed = text.trim().toLowerCase().replace(/ station$/, '');
+    const match = stations.find((s) => s.name.toLowerCase() === typed)
+        ?? (typed.length >= 3 ? stations.find((s) => s.name.toLowerCase().startsWith(typed)) : null);
+    const error = $('station-error');
+    if (!match) {
+        // Say what to do, don't blame the typing
+        error.textContent = `We couldn’t find a station called “${text.trim()}”. Pick one from the list as you type.`;
+        error.hidden = false;
+        return;
+    }
+    error.hidden = true;
+    $('station-input').value = match.name;
+    state.station = match.id;
+    delete $('board').dataset.staggered; // a new station's list settles in again
+    saveUrl();
+    loadBoard();
 }
 
 async function loadBoard() {
     const board = $('board');
     try {
         const { departures } = await getJson(`/api/departures?station=${encodeURIComponent(state.station)}`);
+        board.removeAttribute('aria-busy');
         if (departures.length === 0) {
-            board.innerHTML = '<li class="muted">No trains in the next 2 hours.</li>';
+            board.innerHTML = '<li class="empty">No trains from here in the next 2 hours. Services may have finished for the night; try another station.</li>';
             return;
         }
         board.innerHTML = departures.map((d) => `
@@ -453,24 +483,38 @@ async function loadBoard() {
             </li>`).join('');
         staggerOnce(board);
     } catch (err) {
-        board.innerHTML = `<li class="muted">Couldn’t load departures. ${escapeHtml(err.message)}</li>`;
+        board.innerHTML = `<li class="empty">Departures aren’t loading right now. We’ll try again in 30 seconds.</li>`;
+        console.error('Failed to load departures:', err);
     }
 }
-$('station-select').addEventListener('change', (e) => {
-    state.station = e.target.value;
-    delete $('board').dataset.staggered; // a new station's list settles in again
-    saveUrl();
-    loadBoard();
-});
+$('station-input').addEventListener('change', (e) => pickStation(e.target.value));
+$('station-input').addEventListener('focus', (e) => e.target.select());
 
 // ---------- Alerts ----------
+// "Read more" opens the full text; a line tag jumps to that line's trains
+$('alerts').addEventListener('click', (e) => {
+    const more = e.target.closest('.read-more');
+    if (more) {
+        const open = more.getAttribute('aria-expanded') !== 'true';
+        more.setAttribute('aria-expanded', String(open));
+        more.textContent = open ? 'Show less' : 'Read more';
+        more.closest('li').classList.toggle('open', open);
+        return;
+    }
+    const tag = e.target.closest('[data-line]');
+    if (tag) {
+        applyLine(tag.dataset.line);
+        showTab('trains');
+    }
+});
 async function loadAlerts() {
     const list = $('alerts');
     try {
         const { alerts } = await getJson('/api/alerts');
+        list.removeAttribute('aria-busy');
         $('alerts-count').textContent = alerts.length || '';
         if (alerts.length === 0) {
-            list.innerHTML = '<li class="muted">No rail alerts right now.</li>';
+            list.innerHTML = '<li class="empty">No rail alerts right now. Trains are running normally.</li>';
             return;
         }
         list.innerHTML = alerts.map((a) => {
@@ -481,12 +525,14 @@ async function loadAlerts() {
               <span class="effect">${escapeHtml(a.effect)}</span>
               ${a.url ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">${escapeHtml(a.header)}</a>` : `<b>${escapeHtml(a.header)}</b>`}
               <p>${escapeHtml(a.description)}</p>
-              ${shown.length ? `<div class="alert-lines">${shown.map((l) => `<span style="--c:${escapeHtml(l.color)};--tc:${textOn(l.color)}">${escapeHtml(l.name)}</span>`).join('')}${more > 0 ? `<span style="--c:var(--sand-2);--tc:var(--muted)">+${more}</span>` : ''}</div>` : ''}
+              ${a.description.length > 110 ? '<button type="button" class="link-btn read-more" aria-expanded="false">Read more</button>' : ''}
+              ${shown.length ? `<div class="alert-lines">${shown.map((l) => `<button type="button" data-line="${escapeHtml(l.name)}" title="Show ${escapeHtml(l.name)} trains" style="--c:${escapeHtml(l.color)};--tc:${textOn(l.color)}">${escapeHtml(l.name)}</button>`).join('')}${more > 0 ? `<span style="--c:var(--sand-2);--tc:var(--muted)">+${more} more</span>` : ''}</div>` : ''}
             </li>`;
         }).join('');
         staggerOnce(list);
     } catch (err) {
-        list.innerHTML = `<li class="muted">Couldn’t load alerts. ${escapeHtml(err.message)}</li>`;
+        list.innerHTML = '<li class="empty">Alerts aren’t loading right now. We’ll try again in a few minutes.</li>';
+        console.error('Failed to load alerts:', err);
     }
 }
 
