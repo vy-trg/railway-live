@@ -4,66 +4,99 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Railway Live – Brisbane Trains</title>
+    <title>Railway Live · South East Queensland trains</title>
+    <meta name="description" content="Live map, departures and delays for South East Queensland trains, from TransLink open data.">
+    <meta name="theme-color" content="#f4ecdf">
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-
-    <style>
-        html,
-        body {
-            margin: 0;
-            height: 100%;
-        }
-
-        /* Full-screen map; dvh keeps it correct when the phone's address bar shows/hides */
-        #map {
-            height: 100vh;
-            height: 100dvh;
-            width: 100%;
-        }
-
-        /* Status banner floats over the map, to the right of the zoom buttons */
-        #status-banner {
-            position: fixed;
-            top: 10px;
-            left: 56px;
-            right: 10px;
-            max-width: 360px;
-            z-index: 1000;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font: 14px/1.4 system-ui, sans-serif;
-            background: #fff;
-            color: #1d2433;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-        }
-
-        #status-banner.ok {
-            background: #d4edda;
-        }
-
-        #status-banner.stale {
-            background: #fff3cd;
-        }
-
-        #status-banner.error {
-            background: #f8d7da;
-        }
-    </style>
+    <link rel="stylesheet" href="/style.css">
 </head>
 
 <body>
-    <!-- role="status" lets screen readers announce each update -->
-    <div id="status-banner" role="status">Loading train data…</div>
-    <div id="map"></div>
+    <header class="top">
+        <a class="brand" href="/">
+            <span class="logo" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>
+                <b>Railway Live</b>
+                <small>South East Queensland</small>
+            </span>
+        </a>
+        <!-- How fresh the data is. role="status" is read out when it changes. -->
+        <p id="feed-status" class="feed" role="status"><span class="dot"></span><span class="feed-text">Connecting to TransLink…</span></p>
+    </header>
+
+    <!-- Reminder messages; role="alert" so screen readers announce them straight away -->
+    <p id="banner" class="banner" role="alert" hidden></p>
+
+    <div class="app">
+        <!-- Map with the coloured track lines -->
+        <section class="map-wrap" aria-label="Live map">
+            <div id="map"></div>
+            <ul class="legend" aria-label="What the marker colours mean">
+                <li><i class="lv-ontime"></i>On time</li>
+                <li><i class="lv-late"></i>2–5 min late</li>
+                <li><i class="lv-verylate"></i>5+ min late</li>
+            </ul>
+
+            <!-- One train's journey, shown when a train is picked -->
+            <article id="journey" class="journey" hidden aria-live="polite">
+                <header class="journey-head">
+                    <span id="journey-line" class="line-pill"></span>
+                    <button id="journey-close" class="icon-btn" type="button" aria-label="Close journey">×</button>
+                </header>
+                <h2 id="journey-title"></h2>
+                <p id="journey-sub" class="muted"></p>
+                <ol id="journey-stops" class="stops"></ol>
+            </article>
+        </section>
+
+        <aside class="panel">
+            <nav class="tabs" role="tablist" aria-label="Sections">
+                <button role="tab" id="tab-trains" aria-controls="view-trains" aria-selected="true" type="button">Trains</button>
+                <button role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" type="button">Next trains</button>
+                <button role="tab" id="tab-alerts" aria-controls="view-alerts" aria-selected="false" type="button">Alerts <span id="alerts-count" class="count"></span></button>
+            </nav>
+
+            <!-- Trains: network numbers, line filter, list of trains -->
+            <section id="view-trains" class="view" role="tabpanel" aria-labelledby="tab-trains">
+                <!-- One line of numbers instead of four boxes: the list below already shows which trains are late -->
+                <p class="summary"><b id="kpi-running">–</b> trains running · <b id="kpi-ontime">–</b> on time<span id="kpi-delay-wrap"> · late ones about <b id="kpi-delay">–</b></span></p>
+                <div class="filter">
+                    <label class="visually-hidden" for="line-filter">Line</label>
+                    <input id="line-filter" list="line-list" placeholder="Filter by line, e.g. Springfield" autocomplete="off">
+                    <datalist id="line-list"></datalist>
+                    <button id="line-clear" type="button" class="link-btn" hidden>Clear</button>
+                </div>
+                <ul id="train-list" class="train-list"><li class="muted">Loading trains…</li></ul>
+            </section>
+
+            <!-- Next trains from one station -->
+            <section id="view-board" class="view" role="tabpanel" aria-labelledby="tab-board" hidden>
+                <label class="field-label" for="station-select">Departures from</label>
+                <select id="station-select"></select>
+                <ul id="board" class="board"><li class="muted">Loading timetable…</li></ul>
+            </section>
+
+            <!-- Rail alerts -->
+            <section id="view-alerts" class="view" role="tabpanel" aria-labelledby="tab-alerts" hidden>
+                <ul id="alerts" class="alerts"><li class="muted">Loading…</li></ul>
+            </section>
+
+            <footer class="foot">
+                Data: <a href="https://translink.com.au/about-translink/open-data">TransLink</a> (CC BY 4.0) ·
+                Map © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ·
+                <a href="https://github.com/vy-trg/railway-live">Source</a>
+            </footer>
+        </aside>
+    </div>
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
-    <!-- The map code lives in its own file so the security policy can block inline scripts -->
+    <!-- The page code lives in its own file so the security policy can block inline scripts -->
     <script src="/app.js"></script>
 </body>
 

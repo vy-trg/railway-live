@@ -14,14 +14,14 @@ function makeFeed(entity) {
     return FeedMessage.encode(message).finish();
 }
 
-test('turns a vehicle into { id, tripId, lat, lng }', () => {
+test('turns a vehicle into { id, tripId, routeId, stopId, lat, lng }', () => {
     const buffer = makeFeed([
         { id: 'v1', vehicle: { trip: { tripId: 'T1' }, position: { latitude: -27.466, longitude: 153.026 } } },
     ]);
     const trains = parseFeed(buffer);
 
     assert.equal(trains.length, 1);
-    assert.deepEqual(Object.keys(trains[0]).sort(), ['id', 'lat', 'lng', 'tripId']);
+    assert.deepEqual(Object.keys(trains[0]).sort(), ['atStop', 'id', 'lat', 'lng', 'routeId', 'stopId', 'stopSequence', 'tripId']);
     assert.equal(trains[0].id, 'v1');
     assert.equal(trains[0].tripId, 'T1');
     // Coordinates are 32-bit floats in protobuf, so compare with a small tolerance
