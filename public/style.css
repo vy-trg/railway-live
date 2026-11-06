@@ -237,3 +237,33 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 .stops .fold { text-align: left; }
 .stops .fold .link-btn { text-align: left; }
+
+/* ---------- Calmer pass (feedback from Focus Tracker: fewer boxes, shadows and words) ---------- */
+:root { --shadow: 0 6px 20px rgb(60 45 20 / 0.10); }
+.map-wrap { box-shadow: none; }
+.leaflet-bar { box-shadow: none !important; border: 1px solid var(--line) !important; }
+.legend { box-shadow: none; border: 1px solid var(--line); }
+.tabs button[aria-selected="true"] { box-shadow: none; }
+.train:hover { box-shadow: none; background: color-mix(in srgb, var(--paper) 70%, var(--sand-2)); }
+.summary { margin: 0; color: var(--muted); font-size: 0.92rem; }
+.summary b { color: var(--ink); font-weight: 800; }
+.summary b.good { color: var(--ontime); } .summary b.warn { color: var(--late); } .summary b.bad { color: var(--verylate); }
+.quiet { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.train { padding: 11px 14px 11px 12px; }
+.train .to { font-weight: 700; }
+/* List rows sit together as one sheet instead of 44 separate cards */
+.train-list, .board { gap: 0; background: var(--paper); border-radius: 14px; overflow: hidden; }
+.train-list > li + li, .board > li + li { border-top: 1px solid var(--line); }
+.train, .board li { border-radius: 0; background: transparent; }
+.train[aria-pressed="true"] { box-shadow: none; background: var(--gum-soft); }
+.more-btn { border-radius: 0; background: transparent; }
+.board li { grid-template-columns: auto 1fr auto; padding: 12px 14px; }
+.board .to { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.board .to::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+.board .time { font-size: 1.2rem; }
+.alerts { gap: 10px; }
+.alerts li { border-left-width: 3px; }
+.alerts p { -webkit-line-clamp: 2; }
+.feed { background: transparent; padding: 6px 4px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.filter { padding: 6px; }

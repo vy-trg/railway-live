@@ -20,7 +20,7 @@
             <span class="logo" aria-hidden="true"><i></i><i></i><i></i></span>
             <span>
                 <b>Railway Live</b>
-                <small>South East Queensland trains</small>
+                <small>South East Queensland</small>
             </span>
         </a>
         <!-- How fresh the data is. role="status" is read out when it changes. -->
@@ -58,15 +58,11 @@
 
             <!-- Trains: network numbers, line filter, list of trains -->
             <section id="view-trains" class="view" role="tabpanel" aria-labelledby="tab-trains">
-                <div class="kpis">
-                    <div class="kpi"><b id="kpi-running">–</b><span>trains running</span></div>
-                    <div class="kpi"><b id="kpi-ontime">–</b><span>on time</span></div>
-                    <div class="kpi"><b id="kpi-delay">–</b><span>avg delay when late</span></div>
-                    <div class="kpi wide"><span class="kpi-label">Most delayed right now</span><b id="kpi-worst">–</b></div>
-                </div>
+                <!-- One line of numbers instead of four boxes: the list below already shows which trains are late -->
+                <p class="summary"><b id="kpi-running">–</b> trains running · <b id="kpi-ontime">–</b> on time<span id="kpi-delay-wrap"> · late ones about <b id="kpi-delay">–</b></span></p>
                 <div class="filter">
-                    <label for="line-filter">Line</label>
-                    <input id="line-filter" list="line-list" placeholder="All lines" autocomplete="off">
+                    <label class="visually-hidden" for="line-filter">Line</label>
+                    <input id="line-filter" list="line-list" placeholder="Filter by line, e.g. Springfield" autocomplete="off">
                     <datalist id="line-list"></datalist>
                     <button id="line-clear" type="button" class="link-btn" hidden>Clear</button>
                 </div>

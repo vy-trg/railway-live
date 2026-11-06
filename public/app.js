@@ -129,6 +129,13 @@ function drawTrains() {
     }
 }
 
+// Only problems get a coloured badge; "On time" is quiet text, so late trains stand out
+function statusHtml(level, text) {
+    return level === 'late' || level === 'verylate' || level === 'cancelled'
+        ? `<span class="chip ${escapeHtml(level)}">${escapeHtml(text)}</span>`
+        : `<span class="quiet">${escapeHtml(text)}</span>`;
+}
+
 // ---------- Train list ----------
 const LEVEL_ORDER = { verylate: 0, late: 1, ontime: 2, unknown: 3 };
 const LIST_STEP = 12;
@@ -147,8 +154,8 @@ function renderTrainList() {
         <li><button class="train" type="button" data-trip="${escapeHtml(t.tripId)}" aria-pressed="${t.tripId === state.selected}" style="--c:${escapeHtml(t.color)}">
           <span class="bar"></span>
           <span class="to">To ${escapeHtml(t.headsign ?? 'unknown')}</span>
-          <span class="chip ${escapeHtml(t.level)}">${escapeHtml(t.delayText)}</span>
-          <span class="meta">${escapeHtml(t.routeName)}${t.nextStop ? ` · next ${escapeHtml(t.nextStop)}` : ''}</span>
+          ${statusHtml(t.level, t.delayText)}
+          <span class="meta">${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
         </button></li>`).join('')
         + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more trains</button></li>` : '');
 }
@@ -243,7 +250,7 @@ function renderFeedStatus() {
     if (!lastUpdated) return;
     const seconds = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
     const age = seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)} min ago`;
-    text.textContent = feedState === 'stale' ? `TransLink feed down · data from ${age}` : `Live · updated ${age}`;
+    text.textContent = feedState === 'stale' ? `Feed down · data from ${age}` : `Live · ${age}`;
 }
 setInterval(renderFeedStatus, 5000);
 
@@ -270,10 +277,8 @@ function renderSummary(s) {
     const onTime = $('kpi-ontime');
     onTime.textContent = s.onTimePercent === null ? '–' : `${s.onTimePercent}%`;
     onTime.className = s.onTimePercent === null ? '' : s.onTimePercent >= 90 ? 'good' : s.onTimePercent >= 75 ? 'warn' : 'bad';
-    $('kpi-delay').textContent = `${s.avgLateMinutes || 0} min`;
-    $('kpi-worst').textContent = s.mostDelayed
-        ? `${s.mostDelayed.name} · ${s.mostDelayed.minutes} min`
-        : 'Nothing, all within a minute';
+    $('kpi-delay').textContent = `${Math.round(s.avgLateMinutes)} min`;
+    $('kpi-delay-wrap').hidden = !s.avgLateMinutes;
 }
 
 // ---------- Line filter ----------
@@ -317,8 +322,8 @@ async function loadBoard() {
         board.innerHTML = departures.map((d) => `
             <li class="${d.status === 'cancelled' ? 'cancelled' : ''}">
               <span class="time">${d.expected ? `<small>${escapeHtml(d.scheduled)}</small>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</span>
-              <span><span class="to">${escapeHtml(d.headsign)}</span><span class="route" style="--c:${escapeHtml(d.color)}">${escapeHtml(d.routeName)}</span></span>
-              <span class="right"><span class="chip ${escapeHtml(d.status)}">${escapeHtml(d.statusText)}</span>${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
+              <span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${escapeHtml(d.headsign)}</span>
+              <span class="right">${statusHtml(d.status, d.statusText)}${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
             </li>`).join('');
     } catch (err) {
         board.innerHTML = `<li class="muted">Couldn’t load departures. ${escapeHtml(err.message)}</li>`;
@@ -341,7 +346,7 @@ async function loadAlerts() {
             return;
         }
         list.innerHTML = alerts.map((a) => {
-            const shown = a.lines.slice(0, 5);
+            const shown = a.lines.slice(0, 3);
             const more = a.lines.length - shown.length;
             return `
             <li class="${a.severe ? 'severe' : ''}">
