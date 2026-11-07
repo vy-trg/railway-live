@@ -1,13 +1,21 @@
 # Railway Live 🚆
 ![CI](https://github.com/vy-trg/railway-live/actions/workflows/ci.yml/badge.svg)
 
-Live trains for South East Queensland: where every train is, how late it is, the next departures from your station, and current track closures. An Express server joins TransLink's realtime feeds with the rail timetable in PostgreSQL and serves clean JSON to a Leaflet map.
+Live trains, trams and ferries for South East Queensland: where every service is, how late it is, the next departures from any station, current track closures, and which services are most often late. An Express server joins TransLink's realtime feeds with the timetable in PostgreSQL and serves clean JSON to a Leaflet map.
 
 📁 **[GitHub Repo](https://github.com/vy-trg/railway-live)**
 
 🔗 **[Live Demo](https://railway-live.onrender.com/)**
 
 <p align="center"><img src="docs/screenshot.png" alt="Railway Live on a Saturday evening: 45 trains, 12 trams and 8 ferries on the map, late services listed first" width="720"></p>
+
+---
+
+## The problem
+
+I take the Springfield line to uni, then a bus to Griffith's Nathan campus. TransLink's app shows where my train is right now, but not how reliable each service usually is. A train that is regularly a few minutes late at a certain time decides whether I make the bus.
+
+Railway Live shows every train, tram and ferry live, and records how late each service runs every 10 minutes. The Stats tab shows which lines, times of day and departures are most often late, so I can pick a train I can rely on instead of guessing. Success means: after two weeks of data, I know which morning Springfield train is the most reliable. Connecting the train to the bus is the next project (weeks 8–9).
 
 ---
 
