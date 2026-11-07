@@ -4,7 +4,8 @@ import { getVehicles, getTripUpdates, getAlerts, nowSec } from './realtime.js';
 import * as db from './db/queries.js';
 import { buildLines } from './lines.js';
 import { enrichTrains, summarize, buildBoard, railAlerts, buildTripProgress } from './live.js';
-import { brisbaneClock, parseLocalTime } from './schedule.js';
+import { brisbaneClock, parseLocalTime, formatClock } from './schedule.js';
+import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
@@ -155,6 +156,41 @@ app.get('/api/departures', handle(async (req, res) => {
         stale: updates.stale,
         departures: buildBoard(rows, updates.data, clock.secs, byTrip).slice(0, 8),
     });
+}));
+
+// On-time history recorded by scripts/record-delays.js. It only changes every 10 minutes,
+// so one copy per number of days is kept for 5 minutes.
+const statsCache = new Map();
+app.get('/api/stats', handle(async (req, res) => {
+    const days = Number(req.query.days ?? 7);
+    if (![1, 7, 30].includes(days)) return res.status(400).json({ error: 'days must be 1, 7 or 30' });
+    const cached = statsCache.get(days);
+    if (cached && Date.now() - cached.at < 5 * 60_000) return res.json(cached.body);
+
+    const [{ lines, routes }, now] = await Promise.all([getStatic(), nowSec()]);
+    const raw = await db.getDelayStats(serviceDate(now), days, ON_TIME_SEC);
+    const routeById = new Map(routes.map((r) => [r.route_id, r]));
+    const shape = (r) => ({ trips: r.trips, onTimePercent: percent(r.on_time, r.trips) });
+    const clean = (name) => name.replace(/ station$/, '');
+    const body = {
+        days,
+        since: raw.since,
+        trips: raw.byDay.reduce((n, d) => n + d.trips, 0),
+        lines: statsByLine(raw.byRoute, lines),
+        // An hour with only a couple of trips (1 am, say) gives a misleading percentage
+        byHour: raw.byHour.filter((h) => h.trips >= 5).map((h) => ({ hour: h.hour, ...shape(h) })),
+        byDay: raw.byDay.map((d) => ({ date: d.date, ...shape(d) })),
+        worst: raw.worst.map((w) => ({
+            time: formatClock(w.start_secs),
+            origin: clean(w.origin),
+            headsign: clean(w.headsign),
+            color: `#${routeById.get(w.route_id)?.color ?? '888888'}`,
+            runs: w.runs,
+            avgLateMinutes: Math.round(w.avg_delay / 60),
+        })),
+    };
+    statsCache.set(days, { at: Date.now(), body });
+    res.json(body);
 }));
 
 // Coloured track lines for the map. The timetable doesn't change while the app runs,

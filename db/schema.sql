@@ -63,3 +63,21 @@ CREATE TABLE IF NOT EXISTS route_shapes (
   route_id TEXT PRIMARY KEY REFERENCES routes(route_id) ON DELETE CASCADE,
   coords   JSONB NOT NULL               -- [[lat, lng], ...]
 );
+
+-- How late each trip ran, recorded every 10 minutes by scripts/record-delays.js.
+-- Route, headsign, first departure and origin are copied in, so the history keeps
+-- working after the timetable is reloaded (load-gtfs empties the other tables, not this one).
+CREATE TABLE IF NOT EXISTS trip_delays (
+  service_date DATE    NOT NULL,      -- Brisbane date the trip belongs to
+  trip_id      TEXT    NOT NULL,
+  route_id     TEXT    NOT NULL,
+  headsign     TEXT    NOT NULL,
+  origin       TEXT    NOT NULL,      -- first station, e.g. Springfield Central
+  start_secs   INTEGER NOT NULL,      -- scheduled first departure, seconds after midnight
+  final_delay  INTEGER NOT NULL,      -- latest delay seen (seconds, negative = early)
+  max_delay    INTEGER NOT NULL,      -- worst delay seen
+  cancelled    BOOLEAN NOT NULL DEFAULT false,
+  samples      INTEGER NOT NULL DEFAULT 1,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (service_date, trip_id)
+);
