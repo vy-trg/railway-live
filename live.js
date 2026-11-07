@@ -23,10 +23,11 @@ export function enrichTrains(vehicles, tripUpdates, trips, stopNames, nowSec) {
             lng: v.lng,
             routeId: trip?.route_id ?? v.routeId,
             routeName: trip?.long_name ?? 'Unknown route',
-            headsign: trip?.headsign?.replace(/ station$/, '') ?? null,
+            mode: trip?.mode ?? 'train',
+            headsign: trip?.headsign?.replace(/ (station|ferry terminal)$/, '') ?? null,
             color: trip ? `#${trip.color}` : '#888888',
             textColor: trip ? `#${trip.text_color}` : '#FFFFFF',
-            nextStop: stopNames.get(stopId)?.name?.replace(/ station$/, '') ?? null,
+            nextStop: stopNames.get(stopId)?.name?.replace(/ (station|ferry terminal)$/, '') ?? null,
             delaySec: delay,
             delayText: describeDelay(delay),
             level: delayLevel(delay),
@@ -49,6 +50,7 @@ export function summarize(trains) {
     const worst = [...byRoute.values()].sort((a, b) => b.total / b.count - a.total / a.count)[0];
     return {
         running: trains.length,
+        byMode: { train: trains.filter((t) => t.mode === 'train').length, tram: trains.filter((t) => t.mode === 'tram').length, ferry: trains.filter((t) => t.mode === 'ferry').length },
         withDelayInfo: known.length,
         onTimePercent: known.length ? Math.round(((known.length - late.length) / known.length) * 100) : null,
         avgLateMinutes: late.length ? Math.round((late.reduce((s, t) => s + t.delaySec, 0) / late.length / 60) * 10) / 10 : 0,
@@ -87,7 +89,7 @@ export function buildBoard(rows, tripUpdates, nowClockSecs, vehicles = new Map()
                 delaySec: delay,
                 status: cancelled ? 'cancelled' : delay === null ? 'scheduled' : delayLevel(delay),
                 statusText: cancelled ? 'Cancelled' : delay === null ? 'Scheduled' : describeDelay(delay),
-                headsign: r.headsign.replace(/ station$/, ''),
+                headsign: r.headsign.replace(/ (station|ferry terminal)$/, ''),
                 routeName: r.long_name,
                 color: `#${r.color}`,
                 textColor: `#${r.text_color}`,
@@ -137,7 +139,7 @@ export function buildTripProgress(stops, tripUpdate, nowSec, serviceStartEpoch) 
         else if (!nextFound) { state = 'next'; nextFound = true; }
         return {
             sequence: s.stop_sequence,
-            name: s.name.replace(/ station$/, ''),
+            name: s.name.replace(/ (station|ferry terminal)$/, ''),
             platform: s.platform,
             // Seconds until the train is expected here; the page uses it for "remind me" alerts
             etaSec: expectedEpoch - nowSec,

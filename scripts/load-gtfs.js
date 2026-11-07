@@ -1,4 +1,4 @@
-// Load the rail part of TransLink's GTFS schedule into Postgres.
+// Load the train, tram and ferry part of TransLink's GTFS schedule into Postgres.
 // Usage: DATABASE_URL=... node scripts/load-gtfs.js path/to/unzipped/SEQ_GTFS
 //
 // Only routes with a route_type in ROUTE_TYPES are kept; trips, stop_times and stops
@@ -10,7 +10,8 @@ import { pool } from '../db/pool.js';
 import { parseGtfsTime, parseGtfsDate } from '../schedule.js';
 import { simplify } from '../geo.js';
 
-const ROUTE_TYPES = new Set(['2']); // 2 = rail
+// GTFS route_type -> our mode. 3 (bus) is left out: thousands of routes, a project of its own.
+const ROUTE_TYPES = new Map([['2', 'train'], ['0', 'tram'], ['4', 'ferry']]);
 const BATCH = 2000;
 
 const dir = process.argv[2];
@@ -45,7 +46,7 @@ try {
   const routes = [];
   for await (const r of rows('routes.txt')) {
     if (ROUTE_TYPES.has(r.route_type)) {
-      routes.push([r.route_id, r.route_short_name, r.route_long_name, r.route_color || '888888', r.route_text_color || 'FFFFFF']);
+      routes.push([r.route_id, r.route_short_name, r.route_long_name, r.route_color || '888888', r.route_text_color || 'FFFFFF', ROUTE_TYPES.get(r.route_type)]);
     }
   }
   const routeIds = new Set(routes.map((r) => r[0]));
@@ -69,7 +70,7 @@ try {
     usedStops.add(s.stop_id);
   }
 
-  // Keep only the platforms trains use, and the stations those platforms belong to
+  // Keep only the platforms and wharves these services use, and the stations those platforms belong to
   const allStops = new Map();
   for await (const s of rows('stops.txt')) allStops.set(s.stop_id, s);
   const stops = [];
@@ -113,8 +114,8 @@ try {
     if (serviceIds.has(c.service_id)) calendarDates.push([c.service_id, parseGtfsDate(c.date), Number(c.exception_type)]);
   }
 
-  console.log('Loading rail schedule:');
-  await insertMany(client, 'routes', ['route_id', 'short_name', 'long_name', 'color', 'text_color'], ['text', 'text', 'text', 'text', 'text'], routes);
+  console.log('Loading train, tram and ferry schedule:');
+  await insertMany(client, 'routes', ['route_id', 'short_name', 'long_name', 'color', 'text_color', 'mode'], ['text', 'text', 'text', 'text', 'text', 'text'], routes);
   await insertMany(client, 'stations', ['station_id', 'name', 'lat', 'lng'], ['text', 'text', 'float8', 'float8'], stations);
   await insertMany(client, 'stops', ['stop_id', 'station_id', 'name', 'platform'], ['text', 'text', 'text', 'text'], stops);
   await insertMany(client, 'trips', ['trip_id', 'route_id', 'service_id', 'headsign', 'direction_id'], ['text', 'text', 'text', 'text', 'int2'], trips);

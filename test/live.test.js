@@ -107,3 +107,28 @@ test('journey stops say how many seconds until the train gets there', () => {
     const stops = [{ stop_sequence: 1, departure_secs: 600, name: 'A station', platform: '1' }];
     assert.equal(buildTripProgress(stops, { stops: [{ sequence: 1, delay: 60, skipped: false }] }, 300, 0)[0].etaSec, 360);
 });
+
+test('trams and ferries: each route is its own line, listed after the train lines', () => {
+    const lines = buildLines([
+        ...routes,
+        { route_id: 'F11-18', short_name: 'F11', long_name: 'Apollo Road / Riverside', color: '61C5C9', mode: 'ferry' },
+        { route_id: 'F1-18', short_name: 'F1', long_name: 'Northshore Hamilton / UQ St Lucia', color: '61C5C9', mode: 'ferry' },
+        { route_id: 'L1-32', short_name: 'L1', long_name: 'Helensvale - Burleigh Heads', color: 'FFC425', mode: 'tram' },
+    ]);
+    assert.deepEqual(lines.slice(-3).map((l) => [l.name, l.mode, l.routeIds]), [
+        ['G:link', 'tram', ['L1-32']],
+        ['Ferry F1', 'ferry', ['F1-18']],
+        ['Ferry F11', 'ferry', ['F11-18']], // F1 before F11: numbers sort as numbers
+    ]);
+    assert.ok(!lines.some((l) => l.name === 'Helensvale')); // tram ends don't become train lines
+    assert.equal(lines[0].mode, 'train');
+});
+
+test('summary counts each kind of service', () => {
+    const s = summarize([
+        { routeName: 'A', mode: 'train', delaySec: 0 },
+        { routeName: 'F1', mode: 'ferry', delaySec: 0 },
+        { routeName: 'F1', mode: 'ferry', delaySec: null },
+    ]);
+    assert.deepEqual(s.byMode, { train: 1, tram: 0, ferry: 2 });
+});

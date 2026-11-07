@@ -104,7 +104,7 @@ app.get('/api/summary', handle(async (req, res) => {
 // Lines for the filter: name, TransLink colour and the routes they cover
 app.get('/api/lines', handle(async (req, res) => {
     const { lines } = await getStatic();
-    res.json(lines.map((l) => ({ name: l.name, color: `#${l.color}`, routeIds: l.routeIds })));
+    res.json(lines.map((l) => ({ name: l.name, mode: l.mode, color: `#${l.color}`, routeIds: l.routeIds })));
 }));
 
 app.get('/api/stations', handle(async (req, res) => {
@@ -148,7 +148,7 @@ app.get('/api/departures', handle(async (req, res) => {
     const byTrip = new Map(running.map((v) => [v.tripId, {
         stopSequence: v.stopSequence,
         atStop: v.atStop,
-        stopName: names.get(v.stopId)?.name?.replace(/ station$/, '') ?? 'the previous stop',
+        stopName: names.get(v.stopId)?.name?.replace(/ (station|ferry terminal)$/, '') ?? 'the previous stop',
     }]));
     res.json({
         station,
@@ -171,7 +171,7 @@ app.get('/api/stats', handle(async (req, res) => {
     const raw = await db.getDelayStats(serviceDate(now), days, ON_TIME_SEC);
     const routeById = new Map(routes.map((r) => [r.route_id, r]));
     const shape = (r) => ({ trips: r.trips, onTimePercent: percent(r.on_time, r.trips) });
-    const clean = (name) => name.replace(/ station$/, '');
+    const clean = (name) => name.replace(/ (station|ferry terminal)$/, '');
     const body = {
         days,
         since: raw.since,
@@ -221,7 +221,7 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
     res.json({
         tripId,
         routeName: trip.long_name,
-        headsign: trip.headsign.replace(/ station$/, ''),
+        headsign: trip.headsign.replace(/ (station|ferry terminal)$/, ''),
         color: `#${trip.color}`,
         textColor: `#${trip.text_color}`,
         now,

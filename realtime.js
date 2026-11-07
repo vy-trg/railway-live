@@ -1,4 +1,4 @@
-// The three TransLink realtime feeds, each cached for 30 seconds.
+// The three TransLink realtime feeds (each read for trains, trams and ferries), cached for 30 seconds.
 // If several requests arrive while a fetch is running, they share that one fetch.
 // If the feed fails, the last good copy is returned and marked stale.
 import fs from 'node:fs';
@@ -12,15 +12,32 @@ const FETCH_TIMEOUT = 10_000;
 // reads saved .pb files instead of calling the API (and "now" becomes the time they were saved).
 const FIXTURES = process.env.FEED_FIXTURES;
 
-function makeFeed({ name, url, file, parse, cacheMs = CACHE_MS }) {
+// sources: [{ url, file }]. Each source is fetched and parsed; the lists are joined.
+// If one source fails (say the ferry feed) the others still show; only all failing is an error.
+function makeFeed({ name, sources, parse, merge = (lists) => lists.flat(), cacheMs = CACHE_MS }) {
     const cache = { data: null, updatedAt: 0, feedTime: null };
     let inFlight = null;
 
+    async function loadOne({ url, file }) {
+        if (FIXTURES) {
+            const p = `${FIXTURES}/${file}`;
+            if (!fs.existsSync(p)) return null; // no saved copy for this mode
+            const buffer = fs.readFileSync(p);
+            return { list: parse(buffer), feedTime: feedTimestamp(buffer) };
+        }
+        const res = await checked(fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT) }));
+        const buffer = Buffer.from(await res.arrayBuffer());
+        return { list: parse(buffer), feedTime: feedTimestamp(buffer) };
+    }
+
     async function load() {
-        const buffer = FIXTURES
-            ? fs.readFileSync(`${FIXTURES}/${file}`)
-            : Buffer.from(await (await checked(fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT) }))).arrayBuffer());
-        return { data: parse(buffer), feedTime: feedTimestamp(buffer) };
+        const results = await Promise.allSettled(sources.map(loadOne));
+        const ok = results.filter((r) => r.status === 'fulfilled' && r.value).map((r) => r.value);
+        for (const [i, r] of results.entries()) {
+            if (r.status === 'rejected') console.error(`[feed] ${name} (${sources[i].file}) error:`, r.reason?.message);
+        }
+        if (ok.length === 0) throw results.find((r) => r.status === 'rejected')?.reason ?? new Error(`No ${name} data`);
+        return { data: merge(ok.map((r) => r.list)), feedTime: Math.max(...ok.map((r) => r.feedTime ?? 0)) || null };
     }
 
     return async function get() {
@@ -47,25 +64,30 @@ async function checked(responsePromise) {
     return res;
 }
 
+// Train files keep their old names; tram and ferry copies are optional in test/fixtures
+const MODES = [['Rail', ''], ['Tram', '-tram'], ['Ferry', '-ferry']];
+const sourcesFor = (feed, file, railOverride) => MODES.map(([mode, suffix]) => ({
+    url: mode === 'Rail' && railOverride ? railOverride : `${BASE}/${feed}/${mode}`,
+    file: `${file}${suffix}.pb`,
+}));
+
 export const getVehicles = makeFeed({
     name: 'vehicle positions',
-    url: process.env.FEED_URL || `${BASE}/VehiclePositions/Rail`,
-    file: 'vehicle-positions.pb',
+    sources: sourcesFor('VehiclePositions', 'vehicle-positions', process.env.FEED_URL),
     parse: parseFeed,
 });
 
 export const getTripUpdates = makeFeed({
     name: 'trip updates',
-    url: process.env.TRIP_UPDATES_URL || `${BASE}/TripUpdates/Rail`,
-    file: 'trip-updates.pb',
-    parse: (buffer) => new Map(parseTripUpdates(buffer).map((t) => [t.tripId, t])),
+    sources: sourcesFor('TripUpdates', 'trip-updates', process.env.TRIP_UPDATES_URL),
+    parse: parseTripUpdates,
+    merge: (lists) => new Map(lists.flat().map((t) => [t.tripId, t])),
 });
 
 // Alerts change rarely, so 5 minutes is plenty
 export const getAlerts = makeFeed({
     name: 'alerts',
-    url: process.env.ALERTS_URL || `${BASE}/Alerts`,
-    file: 'alerts.pb',
+    sources: [{ url: process.env.ALERTS_URL || `${BASE}/Alerts`, file: 'alerts.pb' }],
     parse: parseAlerts,
     cacheMs: 5 * 60_000,
 });
