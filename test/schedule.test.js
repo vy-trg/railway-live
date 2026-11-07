@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGtfsTime, parseGtfsDate, describeDelay, delayLevel } from '../schedule.js';
+import { parseGtfsTime, parseGtfsDate, describeDelay, delayLevel, parseLocalTime } from '../schedule.js';
 
 test('GTFS times become seconds after midnight, including after midnight services', () => {
     assert.equal(parseGtfsTime('00:00:00'), 0);
@@ -37,4 +37,18 @@ test('simplify keeps the ends and the corners, drops points on a straight line',
     const line = [[0, 0], [0, 1], [0, 2], [0, 3], [1, 3], [2, 3]];
     assert.deepEqual(simplify(line, 0.01), [[0, 0], [0, 3], [2, 3]]);
     assert.deepEqual(simplify([[0, 0], [1, 1]], 0.01), [[0, 0], [1, 1]]);
+});
+
+test('parseLocalTime reads a Brisbane date-time picker value', () => {
+  const t = parseLocalTime('2026-11-09T18:30');
+  assert.equal(t.date, '2026-11-09');
+  assert.equal(t.secs, 18 * 3600 + 30 * 60);
+  assert.equal(t.epoch, Date.UTC(2026, 10, 9, 8, 30) / 1000);
+});
+
+test('parseLocalTime rejects times that do not exist', () => {
+  assert.equal(parseLocalTime('2026-02-30T10:00'), null);
+  assert.equal(parseLocalTime('2026-11-09T25:00'), null);
+  assert.equal(parseLocalTime('tomorrow'), null);
+  assert.equal(parseLocalTime(undefined), null);
 });

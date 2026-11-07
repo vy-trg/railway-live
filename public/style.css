@@ -397,3 +397,8 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 }
 .alert-lines span { cursor: default; }
 .alert-lines button:hover { filter: brightness(0.95); }
+
+/* Plan ahead: "Leaving" picker under the station box */
+.when { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
+.when .field-label { grid-column: 1 / -1; }
+#when-note:empty { display: none; }
