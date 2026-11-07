@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS routes (
   text_color  TEXT NOT NULL
 );
 
+-- train, tram (G:link) or ferry. Added after the first version, so older databases get it here.
+ALTER TABLE routes ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'train';
+
 -- Stations (GTFS location_type = 1), e.g. place_spcsta = Springfield Central
 CREATE TABLE IF NOT EXISTS stations (
   station_id  TEXT PRIMARY KEY,

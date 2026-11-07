@@ -414,13 +414,30 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .bars li { display: grid; grid-template-columns: 7.5rem 1fr 2.8rem; align-items: center; gap: 10px; font-size: 0.85rem; }
 .bar-label { display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .bars b { text-align: right; font-variant-numeric: tabular-nums; }
-.bar { height: 8px; border-radius: 999px; background: var(--sand-2); overflow: hidden; }
-.bar i { display: block; height: 100%; border-radius: inherit; background: var(--ontime); }
-.bar i.warn { background: var(--late); } .bar i.bad { background: var(--verylate); }
+.bars .bar { height: 8px; border-radius: 999px; background: var(--sand-2); overflow: hidden; }
+.bars .bar i { display: block; height: 100%; border-radius: inherit; background: var(--ontime); }
+.bars .bar i.warn { background: var(--late); } .bars .bar i.bad { background: var(--verylate); }
 .line-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; }
 .worst { list-style: none; margin: 0; padding: 0; background: var(--paper); border-radius: 14px; }
 .worst li { display: grid; gap: 2px; padding: 10px 14px; border-top: 1px solid var(--sand-2); }
 .worst li:first-child { border-top: 0; }
 .worst .to { font-weight: 800; font-size: 0.92rem; }
-@media (prefers-reduced-motion: no-preference) { .bar i { transition: width 400ms var(--ease-out); } }
+@media (prefers-reduced-motion: no-preference) { .bars .bar i { transition: width 400ms var(--ease-out); } }
 .tabs button { white-space: nowrap; padding-inline: 6px; }
+
+/* ---------- Trams and ferries ---------- */
+/* Same cream ring and delay colour as the train circles; only the shape changes */
+.vehicle { display: block; width: 100%; height: 100%; box-sizing: border-box; background: var(--fill); border: 3px solid #fffaf3; box-shadow: 0 0 0 1px rgb(60 45 20 / 0.15); cursor: pointer; }
+.vehicle.tram { border-radius: 4px; }
+.vehicle.ferry { transform: rotate(45deg) scale(0.85); border-radius: 2px; }
+.vehicle.selected { border-width: 4px; }
+.legend-shapes { display: flex; align-items: center; gap: 5px; }
+.legend-shapes i { width: 10px; height: 10px; background: var(--muted); display: inline-block; margin-left: 4px; }
+.legend-shapes i:first-child { margin-left: 0; }
+.legend .legend-shapes i.shape-train { border-radius: 50%; }
+.legend .legend-shapes i.shape-tram { border-radius: 2px; }
+.legend .legend-shapes i.shape-ferry { border-radius: 1px; transform: rotate(45deg) scale(0.8); }
+/* Phones: the All / Trains / Tram / Ferries buttons already say which is which */
+@media (max-width: 999px) { .legend-shapes { display: none !important; } }
+#mode-seg { justify-self: start; }
+.summary #kpi-running b { color: var(--ink); font-weight: 800; }

@@ -10,7 +10,7 @@ const RUNS_ON = (service, day) => `(
 )`;
 
 export async function getRoutes() {
-  const { rows } = await pool.query('SELECT route_id, short_name, long_name, color, text_color FROM routes ORDER BY route_id');
+  const { rows } = await pool.query('SELECT route_id, short_name, long_name, color, text_color, mode FROM routes ORDER BY route_id');
   return rows;
 }
 
@@ -28,7 +28,7 @@ export async function getStations() {
 export async function getTrips(tripIds) {
   if (tripIds.length === 0) return new Map();
   const { rows } = await pool.query(
-    `SELECT t.trip_id, t.headsign, r.route_id, r.long_name, r.color, r.text_color
+    `SELECT t.trip_id, t.headsign, r.route_id, r.long_name, r.short_name, r.color, r.text_color, r.mode
      FROM trips t JOIN routes r ON r.route_id = t.route_id
      WHERE t.trip_id = ANY($1)`,
     [tripIds]

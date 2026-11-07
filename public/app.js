@@ -59,6 +59,7 @@ async function getJson(url) {
 const params = new URLSearchParams(location.search);
 const state = {
     line: params.get('line') || '',
+    mode: ['train', 'tram', 'ferry'].includes(params.get('mode')) ? params.get('mode') : '', // '' = all
     station: params.get('station') || DEFAULT_STATION,
     tab: ['trains', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
     at: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(params.get('at') ?? '') ? params.get('at') : '', // planned time, '' = now
@@ -67,6 +68,7 @@ const state = {
 let statsDays = 7; // period on the Stats tab
 function saveUrl() {
     const p = new URLSearchParams();
+    if (state.mode) p.set('mode', state.mode);
     if (state.line) p.set('line', state.line);
     if (state.station !== DEFAULT_STATION) p.set('station', state.station);
     if (state.tab !== 'trains') p.set('tab', state.tab);
@@ -125,6 +127,7 @@ let lines = [];
 let lastTrains = [];
 
 function routeVisible(train) {
+    if (state.mode && train.mode !== state.mode) return false;
     if (!state.line) return true;
     const line = lines.find((l) => l.name === state.line);
     return !line || line.routeIds.includes(train.routeId);
@@ -156,6 +159,20 @@ function glide(marker, to) {
     marker.glideFrame = requestAnimationFrame(step);
 }
 
+// Trains are circles (as before). Trams are rounded squares and ferries diamonds, so the
+// kind of service is clear without relying on colour alone.
+const MODE_NOUN = { train: ['train', 'trains'], tram: ['tram', 'trams'], ferry: ['ferry', 'ferries'] };
+function shapeIcon(t) {
+    const selected = t.tripId === state.selected;
+    const size = selected ? 20 : 15;
+    return L.divIcon({
+        className: '',
+        html: `<span class="vehicle ${t.mode}${selected ? ' selected' : ''}" style="--fill:${cssVar(LEVEL_VARS[t.level] ?? '--muted')}"></span>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+    });
+}
+
 function drawTrains() {
     const seen = new Set();
     for (const t of lastTrains) {
@@ -163,17 +180,27 @@ function drawTrains() {
         seen.add(t.id);
         const tip = `${t.headsign ? `To ${t.headsign}` : t.routeName} · ${t.delayText}`;
         const marker = trainMarkers.get(t.id);
-        if (marker) {
-            glide(marker, [t.lat, t.lng]);
-            marker.setStyle(markerStyle(t)).setTooltipContent(escapeHtml(tip));
+        if (marker && marker.mode !== t.mode) { map.removeLayer(marker); trainMarkers.delete(t.id); }
+        const existing = trainMarkers.get(t.id);
+        if (existing) {
+            glide(existing, [t.lat, t.lng]);
+            if (t.mode === 'train') existing.setStyle(markerStyle(t));
+            else existing.setIcon(shapeIcon(t));
+            existing.setTooltipContent(escapeHtml(tip));
         } else {
-            const m = L.circleMarker([t.lat, t.lng], markerStyle(t)).addTo(map)
+            const m = (t.mode === 'train'
+                ? L.circleMarker([t.lat, t.lng], markerStyle(t))
+                : L.marker([t.lat, t.lng], { icon: shapeIcon(t), keyboard: false })).addTo(map)
                 .bindTooltip(escapeHtml(tip), { direction: 'top', offset: [0, -8] });
+            m.mode = t.mode;
             m.on('click', () => selectTrain(m.trainTripId));
             trainMarkers.set(t.id, m);
         }
         trainMarkers.get(t.id).trainTripId = t.tripId;
-        if (t.tripId === state.selected) trainMarkers.get(t.id).bringToFront();
+        if (t.tripId === state.selected) {
+            const sel = trainMarkers.get(t.id);
+            if (sel.bringToFront) sel.bringToFront(); else sel.setZIndexOffset(1000);
+        }
     }
     for (const [id, marker] of trainMarkers) {
         if (!seen.has(id)) {
@@ -200,10 +227,12 @@ function renderTrainList() {
     const trains = lastTrains.filter(routeVisible)
         // Late trains first: that's what someone checking the network wants to know
         .sort((a, b) => (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || (b.delaySec ?? 0) - (a.delaySec ?? 0));
+    const noun = (n) => (state.mode ? MODE_NOUN[state.mode][n === 1 ? 0 : 1] : n === 1 ? 'service' : 'services');
     if (trains.length === 0) {
         list.innerHTML = state.line
-            ? `<li class="empty">No ${escapeHtml(state.line)} trains are running right now. <button type="button" class="link-btn" data-clear-line>Show all lines</button></li>`
-            : '<li class="empty">No trains are running right now. Services usually start again around 5am.</li>';
+            ? `<li class="empty">No ${escapeHtml(state.line)} services are running right now. <button type="button" class="link-btn" data-clear-line>Show all lines</button></li>`
+            : `<li class="empty">No ${noun(0)} are running right now. Services usually start again around 5am.</li>`;
+        $('filter-note').textContent = '';
         return;
     }
     const hidden = trains.length - listLimit;
@@ -212,13 +241,13 @@ function renderTrainList() {
           <span class="bar"></span>
           <span class="to">To ${escapeHtml(t.headsign ?? 'unknown')}</span>
           ${statusHtml(t.level, t.delayText)}
-          <span class="meta">${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
+          <span class="meta">${t.mode !== 'train' ? `${t.mode === 'tram' ? 'G:link' : 'Ferry'} · ` : ''}${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
         </button></li>`).join('')
-        + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more trains</button></li>` : '');
+        + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more ${noun(hidden)}</button></li>` : '');
     staggerOnce(list);
     // Say what the filter did, e.g. "Showing 6 Springfield trains"
-    $('filter-note').textContent = state.line && trains.length
-        ? `Showing ${trains.length} ${state.line} train${trains.length === 1 ? '' : 's'}` : '';
+    $('filter-note').textContent = state.line
+        ? `Showing ${trains.length} ${state.line} ${noun(trains.length)}` : '';
 }
 $('train-list').addEventListener('click', (e) => {
     if (e.target.closest('[data-clear-line]')) {
@@ -412,7 +441,11 @@ async function loadLive() {
 }
 
 function renderSummary(s) {
-    $('kpi-running').textContent = s.running;
+    // "45 trains · 1 tram · 12 ferries running"; a kind with none running is left out
+    const parts = Object.entries(s.byMode ?? { train: s.running })
+        .filter(([, n]) => n > 0)
+        .map(([mode, n]) => `<b>${n}</b> ${MODE_NOUN[mode][n === 1 ? 0 : 1]}`);
+    $('kpi-running').innerHTML = parts.join(' · ') || '<b>0</b> services';
     const onTime = $('kpi-ontime');
     onTime.textContent = s.onTimePercent === null ? '–' : `${s.onTimePercent}%`;
     onTime.className = s.onTimePercent === null ? '' : s.onTimePercent >= 90 ? 'good' : s.onTimePercent >= 75 ? 'warn' : 'bad';
@@ -663,3 +696,24 @@ document.querySelector('.seg').addEventListener('click', (e) => {
     for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(b === btn));
     loadStats();
 });
+
+// ---------- Kind of service: All / Trains / Tram / Ferries ----------
+function applyMode(mode) {
+    state.mode = mode;
+    for (const b of document.querySelectorAll('#mode-seg button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+    // A line from another kind of service would hide everything, so drop it
+    const line = lines.find((l) => l.name === state.line);
+    if (mode && line && line.mode !== mode) applyLine('');
+    listLimit = LIST_STEP;
+    saveUrl();
+    drawTrains();
+    renderTrainList();
+    // The G:link is on the Gold Coast, far from Brisbane: zoom the map to what is now showing
+    const shown = lastTrains.filter(routeVisible).map((t) => [t.lat, t.lng]);
+    if (mode && shown.length) map.flyToBounds(shown, { padding: [40, 40], maxZoom: 13, duration: reduceMotion() ? 0 : 0.8 });
+}
+document.querySelector('#mode-seg').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-mode]');
+    if (btn) applyMode(btn.dataset.mode);
+});
+for (const b of document.querySelectorAll('#mode-seg button')) b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode));

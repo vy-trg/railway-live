@@ -24,6 +24,7 @@ Railway Live puts a thin server in between: it fetches and decodes the feed **at
 
 ## Features
 
+- **Trains, the G:link tram and Brisbane ferries:** one map and list for all three, with an All / Trains / Tram / Ferries switch. Trains are circles, trams squares, ferries diamonds, so the kind of service doesn't depend on colour alone. Buses are left out on purpose (thousands of vehicles: a project of its own).
 - **Live map:** every train on track lines drawn in each route's TransLink colour (from GTFS `shapes.txt`, simplified with Douglas–Peucker), refreshed every 30 seconds. The dot shows how late it is: green on time, amber 2–5 min, red 5+.
 - **Journey card:** pick a train to see every stop with scheduled and expected times; passed stops are crossed out and folded away, skipped stops are marked.
 - **Next trains** from any station (Springfield Central by default): scheduled time, expected time when late, platform and status, including cancelled and skipped stops, and where each train is now ("At Richlands · 2 stops away · 6 min").
@@ -69,7 +70,7 @@ Browser  --every 30s-->  /api/trains, /api/summary, /api/departures  -->  30s ca
 | Method | Path | Returns |
 |---|---|---|
 | `GET` | `/api/trains` | `{ updatedAt, stale, trains: [{ id, lat, lng, routeName, headsign, color, nextStop, delaySec, delayText, level }] }`. `stale: true` means the feed failed and these are the last known positions. `503` if no data is available yet. |
-| `GET` | `/api/summary` | `{ running, onTimePercent, avgLateMinutes, mostDelayed }` |
+| `GET` | `/api/summary` | `{ running, byMode: { train, tram, ferry }, onTimePercent, avgLateMinutes, mostDelayed }` |
 | `GET` | `/api/departures?station=place_spcsta` | Next 8 departures in the next 2 hours, with live delays. `400` for an unknown station |
 | `GET` | `/api/departures?station=…&at=2026-11-09T18:30` | Timetable from that Brisbane time for 3 hours, up to 7 days ahead. `400` for a bad or out-of-range time |
 | `GET` | `/api/stats?days=7` | On-time history for 1, 7 or 30 days: `{ since, trips, lines, byHour, byDay, worst }` (cached for 5 minutes) |
@@ -91,7 +92,7 @@ cd railway-live
 npm install
 ```
 
-Load the rail timetable (about 265,000 stop times, ~60 MB in Postgres, 20 seconds):
+Load the train, tram and ferry timetable (about 323,000 stop times, ~72 MB in Postgres, 20-30 seconds):
 
 ```bash
 curl -o SEQ_GTFS.zip https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip
@@ -157,7 +158,7 @@ schedule.js        GTFS time and date helpers (unit tested)
 lines.js           Groups TransLink routes into lines (unit tested)
 db/schema.sql      Rail timetable tables
 db/queries.js      Timetable queries (departures, trips, stops)
-scripts/load-gtfs.js  Loads the rail part of SEQ_GTFS.zip into Postgres
+scripts/load-gtfs.js  Loads trains, the G:link and ferries from SEQ_GTFS.zip into Postgres
 public/            Page, styles and map code
 learning/          Practice files from building this (first feed script, first Leaflet map)
 NOTES.md           Notes on the data source and what I learned

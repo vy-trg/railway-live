@@ -4,8 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Railway Live · South East Queensland trains</title>
-    <meta name="description" content="Live map, departures and delays for South East Queensland trains, from TransLink open data.">
+    <title>Railway Live · South East Queensland trains, trams and ferries</title>
+    <meta name="description" content="Live map, departures and delays for South East Queensland trains, the G:link tram and Brisbane ferries, from TransLink open data.">
     <meta name="theme-color" content="#f4ecdf">
 
     <!-- Leaflet CSS -->
@@ -20,7 +20,7 @@
             <span class="logo" aria-hidden="true"><i></i><i></i><i></i></span>
             <span>
                 <b>Railway Live</b>
-                <small>South East Queensland</small>
+                <small>Trains, trams &amp; ferries · South East Queensland</small>
             </span>
         </a>
         <!-- How fresh the data is. role="status" is read out when it changes. -->
@@ -38,6 +38,7 @@
                 <li><i class="lv-ontime"></i>On time</li>
                 <li><i class="lv-late"></i>2–5 min late</li>
                 <li><i class="lv-verylate"></i>5+ min late</li>
+                <li class="legend-shapes" aria-label="Marker shapes: circle train, square tram, diamond ferry"><i class="shape-train"></i>Train <i class="shape-tram"></i>Tram <i class="shape-ferry"></i>Ferry</li>
             </ul>
 
             <!-- One train's journey, shown when a train is picked -->
@@ -54,8 +55,8 @@
 
         <aside class="panel">
             <nav class="tabs" role="tablist" aria-label="Sections">
-                <button role="tab" id="tab-trains" aria-controls="view-trains" aria-selected="true" type="button">Trains</button>
-                <button role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" type="button">Next trains</button>
+                <button role="tab" id="tab-trains" aria-controls="view-trains" aria-selected="true" type="button">Live</button>
+                <button role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" type="button">Departures</button>
                 <button role="tab" id="tab-alerts" aria-controls="view-alerts" aria-selected="false" type="button">Alerts <span id="alerts-count" class="count"></span></button>
                 <button role="tab" id="tab-stats" aria-controls="view-stats" aria-selected="false" type="button">Stats</button>
             </nav>
@@ -63,10 +64,17 @@
             <!-- Trains: network numbers, line filter, list of trains -->
             <section id="view-trains" class="view" role="tabpanel" aria-labelledby="tab-trains">
                 <!-- One line of numbers instead of four boxes: the list below already shows which trains are late -->
-                <p class="summary"><b id="kpi-running">–</b> trains running · <b id="kpi-ontime">–</b> on time<span id="kpi-delay-wrap"> · late ones about <b id="kpi-delay">–</b></span></p>
+                <p class="summary"><span id="kpi-running">–</span> running · <b id="kpi-ontime">–</b> on time<span id="kpi-delay-wrap"> · late ones about <b id="kpi-delay">–</b></span></p>
+                <!-- Pick a kind of service; the line filter below narrows it further -->
+                <div class="seg" id="mode-seg" role="group" aria-label="Show">
+                    <button type="button" data-mode="" aria-pressed="true">All</button>
+                    <button type="button" data-mode="train" aria-pressed="false">Trains</button>
+                    <button type="button" data-mode="tram" aria-pressed="false">Tram</button>
+                    <button type="button" data-mode="ferry" aria-pressed="false">Ferries</button>
+                </div>
                 <div class="filter">
                     <label class="visually-hidden" for="line-filter">Line</label>
-                    <input id="line-filter" list="line-list" placeholder="Filter by line, e.g. Springfield" autocomplete="off">
+                    <input id="line-filter" list="line-list" placeholder="Filter by line, e.g. Springfield or Ferry F1" autocomplete="off">
                     <datalist id="line-list"></datalist>
                     <button id="line-clear" type="button" class="link-btn" hidden>Clear</button>
                 </div>
