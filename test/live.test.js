@@ -132,3 +132,12 @@ test('summary counts each kind of service', () => {
     ]);
     assert.deepEqual(s.byMode, { train: 1, tram: 0, ferry: 2 });
 });
+
+test('the next stop skips stops passengers do not use (tram turnbacks)', () => {
+    const tu = { stops: [
+        { stopId: 'TURNBACK', sequence: 4, delay: 60, time: 1000, skipped: false },
+        { stopId: 'CAVILL', sequence: 5, delay: 120, time: 1100, skipped: false },
+    ] };
+    assert.equal(nextStop(tu, 900, new Map([['CAVILL', { name: 'Cavill Avenue' }]])).stopId, 'CAVILL');
+    assert.equal(nextStop(tu, 900).stopId, 'TURNBACK'); // without the list, nothing is skipped
+});
