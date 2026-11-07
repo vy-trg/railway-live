@@ -672,6 +672,7 @@ async function loadStats() {
             <li><span class="bar-label"><i class="line-dot" style="--c:${escapeHtml(l.color)}"></i>${escapeHtml(l.name)}</span>
               <span class="bar"><i class="${pctClass(l.onTimePercent)}" style="width:${l.onTimePercent}%"></i></span>
               <b>${l.onTimePercent}%</b></li>`).join('')}</ul>
+          <p class="hint">Late ones on ${escapeHtml(s.lines.slice(-1)[0].name)}, the least reliable line, were about ${s.lines.slice(-1)[0].avgLateMinutes} min late</p>
 
           <h3 class="stats-h">By time of day</h3>
           <p class="hint">When the trip was due to start</p>
