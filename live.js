@@ -3,9 +3,11 @@
 import { delayAtStop, delayLevel, describeDelay, formatClock } from './schedule.js';
 
 // The next stop a train hasn't left yet, with its delay
-export function nextStop(tripUpdate, nowSec) {
+// `known` (optional): stop ids passengers use. The tram feed also lists turnbacks and
+// driver relief points, which aren't in our timetable and shouldn't show as "Next".
+export function nextStop(tripUpdate, nowSec, known) {
     if (!tripUpdate) return null;
-    return tripUpdate.stops.find((s) => !s.skipped && s.time !== null && s.time >= nowSec - 30) ?? null;
+    return tripUpdate.stops.find((s) => !s.skipped && s.time !== null && s.time >= nowSec - 30 && (!known || known.has(s.stopId))) ?? null;
 }
 
 // One map marker per train: position + route + where it's heading + how late
@@ -13,7 +15,7 @@ export function enrichTrains(vehicles, tripUpdates, trips, stopNames, nowSec) {
     return vehicles.map((v) => {
         const trip = trips.get(v.tripId);
         const tu = tripUpdates.get(v.tripId);
-        const next = nextStop(tu, nowSec);
+        const next = nextStop(tu, nowSec, stopNames);
         const delay = next?.delay ?? null;
         const stopId = next?.stopId ?? v.stopId;
         return {

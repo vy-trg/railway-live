@@ -66,6 +66,8 @@ try {
   const usedStops = new Set();
   for await (const s of rows('stop_times.txt')) {
     if (!tripIds.has(s.trip_id)) continue;
+    // Turnbacks and driver relief points on the G:link: no one gets on or off there
+    if (s.pickup_type === '1' && s.drop_off_type === '1') continue;
     stopTimes.push([s.trip_id, Number(s.stop_sequence), s.stop_id, parseGtfsTime(s.arrival_time), parseGtfsTime(s.departure_time)]);
     usedStops.add(s.stop_id);
   }

@@ -7,8 +7,7 @@ Live trains for South East Queensland: where every train is, how late it is, the
 
 🔗 **[Live Demo](https://railway-live.onrender.com/)**
 
-<p align="center"><img src="docs/screenshot.png" alt="Railway Live during the evening peak: 45 trains on the map, late trains listed first" width="720"></p>
-<p align="center"><img src="docs/journey.png" alt="A Ferny Grove train's journey: earlier stops folded, next stop with platform and expected time" width="720"></p>
+<p align="center"><img src="docs/screenshot.png" alt="Railway Live on a Saturday evening: 45 trains, 12 trams and 8 ferries on the map, late services listed first" width="720"></p>
 
 ---
 
