@@ -60,10 +60,11 @@ const params = new URLSearchParams(location.search);
 const state = {
     line: params.get('line') || '',
     station: params.get('station') || DEFAULT_STATION,
-    tab: ['trains', 'board', 'alerts'].includes(params.get('tab')) ? params.get('tab') : 'trains',
+    tab: ['trains', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
     at: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(params.get('at') ?? '') ? params.get('at') : '', // planned time, '' = now
     selected: null, // trip id of the train whose journey is open
 };
+let statsDays = 7; // period on the Stats tab
 function saveUrl() {
     const p = new URLSearchParams();
     if (state.line) p.set('line', state.line);
@@ -74,15 +75,16 @@ function saveUrl() {
 }
 
 // ---------- Tabs ----------
-const TABS = ['trains', 'board', 'alerts'];
+const TABS = ['trains', 'board', 'alerts', 'stats'];
 function showTab(name) {
     state.tab = name;
     for (const t of TABS) {
         $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
         $(`view-${t}`).hidden = t !== name;
     }
-    // The highlight slides to the chosen tab (position 0, 1 or 2)
+    // The highlight slides to the chosen tab (position 0 to 3)
     document.querySelector('.tabs').style.setProperty('--tab', TABS.indexOf(name));
+    if (name === 'stats') loadStats();
     saveUrl();
 }
 for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
@@ -597,4 +599,67 @@ document.addEventListener('visibilitychange', () => {
         loadLive();
         loadBoard();
     }
+});
+
+// ---------- Stats: how often trains ran on time ----------
+// Loaded when the tab opens; the numbers only change every 10 minutes.
+const shortDate = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', timeZone: 'UTC' });
+const hourLabel = (h) => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+const pctClass = (p) => (p >= 80 ? 'good' : p >= 60 ? 'warn' : 'bad');
+
+// A row of simple bars: label, bar, number. No chart library needed for this.
+function bars(rows, label) {
+    return `<ul class="bars">${rows.map((r) => `
+        <li><span class="bar-label">${escapeHtml(label(r))}</span>
+          <span class="bar"><i class="${pctClass(r.onTimePercent)}" style="width:${r.onTimePercent}%"></i></span>
+          <b>${r.onTimePercent}%</b></li>`).join('')}</ul>`;
+}
+
+async function loadStats() {
+    const box = $('stats');
+    const days = statsDays;
+    try {
+        const s = await getJson(`/api/stats?days=${days}`);
+        if (days !== statsDays) return; // another period was picked while this loaded
+        box.removeAttribute('aria-busy');
+        if (s.trips === 0) {
+            box.innerHTML = `<p class="empty">${s.since
+                ? 'No trips recorded in this period yet. Try a longer one.'
+                : 'We’ve only just started recording. Numbers show up after the first trains finish, and they get more useful every day.'}</p>`;
+            return;
+        }
+        const total = s.byDay.reduce((n, d) => n + d.trips, 0);
+        const onTime = Math.round(s.byDay.reduce((n, d) => n + d.trips * d.onTimePercent, 0) / total);
+        box.innerHTML = `
+          <p class="summary"><b class="${pctClass(onTime)}">${onTime}%</b> of ${total.toLocaleString('en-AU')} trips ran on time (less than a minute late).
+            Recorded since ${escapeHtml(shortDate(s.since))}.</p>
+
+          <h3 class="stats-h">By line</h3>
+          <ul class="bars">${s.lines.map((l) => `
+            <li><span class="bar-label"><i class="line-dot" style="--c:${escapeHtml(l.color)}"></i>${escapeHtml(l.name)}</span>
+              <span class="bar"><i class="${pctClass(l.onTimePercent)}" style="width:${l.onTimePercent}%"></i></span>
+              <b>${l.onTimePercent}%</b></li>`).join('')}</ul>
+
+          <h3 class="stats-h">By time of day</h3>
+          <p class="hint">When the trip was due to start</p>
+          ${bars(s.byHour, (h) => hourLabel(h.hour))}
+
+          ${s.byDay.length > 1 ? `<h3 class="stats-h">Day by day</h3>${bars(s.byDay, (d) => shortDate(d.date))}` : ''}
+
+          <h3 class="stats-h">Often late</h3>
+          ${s.worst.length ? `<ol class="worst">${s.worst.map((w) => `
+            <li><span class="to" style="--c:${escapeHtml(w.color)}">${escapeHtml(w.time)} ${escapeHtml(w.origin)} to ${escapeHtml(w.headsign)}</span>
+              <span class="quiet">about ${w.avgLateMinutes} min late · ${w.runs} runs</span></li>`).join('')}</ol>`
+            : '<p class="empty">Each departure needs at least 2 recorded runs before it shows here. Check back in a day or two.</p>'}`;
+    } catch (err) {
+        box.innerHTML = '<p class="empty">The numbers aren’t loading right now. Try again in a minute.</p>';
+        console.error('Failed to load stats:', err);
+    }
+}
+document.querySelector('.seg').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-days]');
+    if (!btn) return;
+    statsDays = Number(btn.dataset.days);
+    for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(b === btn));
+    loadStats();
 });

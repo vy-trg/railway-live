@@ -57,6 +57,7 @@
                 <button role="tab" id="tab-trains" aria-controls="view-trains" aria-selected="true" type="button">Trains</button>
                 <button role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" type="button">Next trains</button>
                 <button role="tab" id="tab-alerts" aria-controls="view-alerts" aria-selected="false" type="button">Alerts <span id="alerts-count" class="count"></span></button>
+                <button role="tab" id="tab-stats" aria-controls="view-stats" aria-selected="false" type="button">Stats</button>
             </nav>
 
             <!-- Trains: network numbers, line filter, list of trains -->
@@ -88,6 +89,16 @@
                 </div>
                 <p id="when-note" class="filter-note" role="status"></p>
                 <ul id="board" class="board" aria-busy="true"><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li></ul>
+            </section>
+
+            <!-- On-time history, recorded every 10 minutes -->
+            <section id="view-stats" class="view" role="tabpanel" aria-labelledby="tab-stats" hidden>
+                <div class="seg" role="group" aria-label="Period">
+                    <button type="button" data-days="1">Today</button>
+                    <button type="button" data-days="7" aria-pressed="true">7 days</button>
+                    <button type="button" data-days="30">30 days</button>
+                </div>
+                <div id="stats" aria-busy="true"><div class="skeleton-row tall" aria-hidden="true"></div><div class="skeleton-row tall" aria-hidden="true"></div></div>
             </section>
 
             <!-- Rail alerts -->

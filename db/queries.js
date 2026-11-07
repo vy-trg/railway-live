@@ -91,3 +91,57 @@ export async function getTripStops(tripId) {
   );
   return rows;
 }
+
+// Save how late these trips are now. Each trip has one row per day: the latest delay
+// replaces the old one, and the worst delay is kept. Trips not in the rail timetable are skipped.
+export async function recordDelays(serviceDate, items) {
+  if (items.length === 0) return 0;
+  const { rowCount } = await pool.query(
+    `INSERT INTO trip_delays (service_date, trip_id, route_id, headsign, origin, start_secs, final_delay, max_delay, cancelled)
+     SELECT $1::date, d.trip_id, t.route_id, t.headsign, COALESCE(sta.name, s.name), first.departure_secs, d.delay, d.delay, d.cancelled
+     FROM unnest($2::text[], $3::int[], $4::bool[]) AS d(trip_id, delay, cancelled)
+     JOIN trips t ON t.trip_id = d.trip_id
+     JOIN LATERAL (SELECT stop_id, departure_secs FROM stop_times WHERE trip_id = d.trip_id ORDER BY stop_sequence LIMIT 1) first ON true
+     JOIN stops s ON s.stop_id = first.stop_id
+     LEFT JOIN stations sta ON sta.station_id = s.station_id
+     ON CONFLICT (service_date, trip_id) DO UPDATE SET
+       final_delay = EXCLUDED.final_delay,
+       max_delay = GREATEST(trip_delays.max_delay, EXCLUDED.final_delay),
+       cancelled = EXCLUDED.cancelled,
+       samples = trip_delays.samples + 1,
+       updated_at = now()`,
+    [serviceDate, items.map((i) => i.tripId), items.map((i) => i.delay), items.map((i) => i.cancelled)]
+  );
+  return rowCount;
+}
+
+// Keep about a month of history so the free database stays small
+export async function pruneDelays(keepDays) {
+  const { rowCount } = await pool.query(
+    'DELETE FROM trip_delays WHERE service_date < CURRENT_DATE - $1::int', [keepDays]);
+  return rowCount;
+}
+
+// The four views on the Stats tab, for the `days` service days up to and including `toDate`
+export async function getDelayStats(toDate, days, onTimeSec) {
+  const range = 'service_date BETWEEN $1::date - ($2::int - 1) AND $1::date';
+  const counts = `count(*)::int AS trips,
+    count(*) FILTER (WHERE NOT cancelled AND final_delay < $3)::int AS on_time,
+    count(*) FILTER (WHERE NOT cancelled AND final_delay >= $3)::int AS late,
+    COALESCE(sum(final_delay) FILTER (WHERE NOT cancelled AND final_delay >= $3), 0)::int AS late_secs`;
+  const args = [toDate, days, onTimeSec];
+  const [byRoute, byHour, byDay, worst, since] = await Promise.all([
+    pool.query(`SELECT route_id, ${counts} FROM trip_delays WHERE ${range} GROUP BY route_id`, args),
+    pool.query(`SELECT (start_secs / 3600) % 24 AS hour, ${counts} FROM trip_delays WHERE ${range} GROUP BY 1 ORDER BY 1`, args),
+    pool.query(`SELECT to_char(service_date, 'YYYY-MM-DD') AS date, ${counts} FROM trip_delays WHERE ${range} GROUP BY 1 ORDER BY 1`, args),
+    // The same departure runs every weekday with a new trip id, so group by what a passenger sees
+    pool.query(`SELECT route_id, origin, headsign, start_secs, count(*)::int AS runs,
+                  round(avg(final_delay))::int AS avg_delay
+                FROM trip_delays WHERE ${range} AND NOT cancelled
+                GROUP BY route_id, origin, headsign, start_secs
+                HAVING count(*) >= 2
+                ORDER BY avg_delay DESC LIMIT 5`, [toDate, days]),
+    pool.query(`SELECT to_char(min(service_date), 'YYYY-MM-DD') AS first FROM trip_delays`),
+  ]);
+  return { byRoute: byRoute.rows, byHour: byHour.rows, byDay: byDay.rows, worst: worst.rows, since: since.rows[0].first };
+}

@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
-    "load-gtfs": "node scripts/load-gtfs.js"
+    "load-gtfs": "node scripts/load-gtfs.js",
+    "record-delays": "node --env-file=.env scripts/record-delays.js"
   },
   "keywords": [],
   "author": "",

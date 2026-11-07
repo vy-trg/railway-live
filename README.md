@@ -27,6 +27,8 @@ Railway Live puts a thin server in between: it fetches and decodes the feed **at
 - **Live map:** every train on track lines drawn in each route's TransLink colour (from GTFS `shapes.txt`, simplified with Douglas–Peucker), refreshed every 30 seconds. The dot shows how late it is: green on time, amber 2–5 min, red 5+.
 - **Journey card:** pick a train to see every stop with scheduled and expected times; passed stops are crossed out and folded away, skipped stops are marked.
 - **Next trains** from any station (Springfield Central by default): scheduled time, expected time when late, platform and status, including cancelled and skipped stops, and where each train is now ("At Richlands · 2 stops away · 6 min").
+- **Plan ahead:** pick any time in the next 7 days to see the timetable for the 3 hours after it.
+- **On-time history:** a GitHub Actions job records how late every train is every 10 minutes. The Stats tab shows, for today, 7 or 30 days: on-time share by line, by hour of day, day by day, and the departures that are most often late.
 - **Remind me:** tap the bell next to a stop in the journey card and the page warns you about 2 minutes before the train gets there (banner, plus a notification if allowed). Works while the page is open; a background reminder would need a service worker.
 - **Network numbers** worked out from the live feed: trains running, share on time, average delay of late trains, and the route that is furthest behind right now.
 - **Rail alerts** from TransLink's Alerts feed (track closures, lift outages, timetable changes), with the lines they affect.
@@ -55,6 +57,7 @@ Browser  --every 30s-->  /api/trains, /api/summary, /api/departures  -->  30s ca
 
 - **One query per refresh, not one per train:** route names for all trains on the map come from a single `WHERE trip_id = ANY($1)` query.
 - **Delays carry forward:** GTFS-RT gives a delay for some stops; a stop without its own value uses the last one before it, as the spec says.
+- **Recording history without a server running:** Render's free plan sleeps, so recording happens in a scheduled GitHub Actions job (`scripts/record-delays.js`). Each trip keeps one row per day that is updated in place, and rows older than 35 days are removed, so the free database stays small.
 - **Service days:** Brisbane is UTC+10 all year, and GTFS times can pass 24:00, so the board also checks trips that started the day before.
 
 1. **Same origin:** Express serves `public/index.html` and the API from one server, so the browser needs no CORS setup.
@@ -68,6 +71,8 @@ Browser  --every 30s-->  /api/trains, /api/summary, /api/departures  -->  30s ca
 | `GET` | `/api/trains` | `{ updatedAt, stale, trains: [{ id, lat, lng, routeName, headsign, color, nextStop, delaySec, delayText, level }] }`. `stale: true` means the feed failed and these are the last known positions. `503` if no data is available yet. |
 | `GET` | `/api/summary` | `{ running, onTimePercent, avgLateMinutes, mostDelayed }` |
 | `GET` | `/api/departures?station=place_spcsta` | Next 8 departures in the next 2 hours, with live delays. `400` for an unknown station |
+| `GET` | `/api/departures?station=…&at=2026-11-09T18:30` | Timetable from that Brisbane time for 3 hours, up to 7 days ahead. `400` for a bad or out-of-range time |
+| `GET` | `/api/stats?days=7` | On-time history for 1, 7 or 30 days: `{ since, trips, lines, byHour, byDay, worst }` (cached for 5 minutes) |
 | `GET` | `/api/alerts` | Current rail alerts with the lines they affect |
 | `GET` | `/api/trips/:tripId` | One train's stops with scheduled and expected times, and which are passed, next or skipped |
 | `GET` | `/api/shapes` | Simplified track line per route, for the map (cached for an hour) |
