@@ -81,7 +81,7 @@ const handle = (fn) => async (req, res) => {
     try {
         await fn(req, res);
     } catch (err) {
-        console.error(`[api] ${req.path}:`, err.message);
+        console.error(`[api] ${req.path}:`, err.message || err.code || err);
         res.status(503).json({ error: 'Train data is unavailable right now' });
     }
 };

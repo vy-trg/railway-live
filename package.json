@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js",
+    "dev": "node --env-file=.env --watch server.js",
     "test": "node --test test/*.test.js",
     "load-gtfs": "node scripts/load-gtfs.js",
     "record-delays": "node --env-file=.env scripts/record-delays.js"
