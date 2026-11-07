@@ -61,6 +61,7 @@ const state = {
     line: params.get('line') || '',
     station: params.get('station') || DEFAULT_STATION,
     tab: ['trains', 'board', 'alerts'].includes(params.get('tab')) ? params.get('tab') : 'trains',
+    at: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(params.get('at') ?? '') ? params.get('at') : '', // planned time, '' = now
     selected: null, // trip id of the train whose journey is open
 };
 function saveUrl() {
@@ -68,6 +69,7 @@ function saveUrl() {
     if (state.line) p.set('line', state.line);
     if (state.station !== DEFAULT_STATION) p.set('station', state.station);
     if (state.tab !== 'trains') p.set('tab', state.tab);
+    if (state.at) p.set('at', state.at);
     history.replaceState(null, '', p.toString() ? `?${p}` : location.pathname);
 }
 
@@ -465,13 +467,45 @@ function pickStation(text) {
     loadBoard();
 }
 
+// ---------- When: now, or a time up to 7 days ahead ----------
+// Brisbane has no daylight saving, so its time is always UTC+10
+function brisbaneNow() {
+    return new Date(Date.now() + 10 * 3600 * 1000).toISOString().slice(0, 16);
+}
+function setupWhen() {
+    const input = $('when-input');
+    const now = brisbaneNow();
+    input.min = now;
+    input.max = new Date(Date.now() + (10 + 7 * 24) * 3600 * 1000).toISOString().slice(0, 16);
+    input.value = state.at || now;
+}
+function setWhen(value) {
+    state.at = value && value > brisbaneNow() ? value : '';
+    $('when-now').hidden = !state.at;
+    if (!state.at) $('when-input').value = brisbaneNow();
+    saveUrl();
+    loadBoard();
+}
+function describeWhen(at) {
+    const d = new Date(`${at}:00Z`);
+    const day = d.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const time = d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }).toLowerCase();
+    return `Timetable for ${day}, from ${time}. Live delays show up closer to the time.`;
+}
+
 async function loadBoard() {
     const board = $('board');
+    const at = state.at;
+    $('when-note').textContent = at ? describeWhen(at) : '';
     try {
-        const { departures } = await getJson(`/api/departures?station=${encodeURIComponent(state.station)}`);
+        const query = `station=${encodeURIComponent(state.station)}${at ? `&at=${encodeURIComponent(at)}` : ''}`;
+        const { departures } = await getJson(`/api/departures?${query}`);
+        if (at !== state.at) return; // the time changed while this was loading
         board.removeAttribute('aria-busy');
         if (departures.length === 0) {
-            board.innerHTML = '<li class="empty">No trains from here in the next 2 hours. Services may have finished for the night; try another station.</li>';
+            board.innerHTML = at
+                ? '<li class="empty">No trains from here in the 3 hours after that time. Try an earlier time or another station.</li>'
+                : '<li class="empty">No trains from here in the next 2 hours. Services may have finished for the night; try another station or plan ahead above.</li>';
             return;
         }
         board.innerHTML = departures.map((d) => `
@@ -487,6 +521,10 @@ async function loadBoard() {
         console.error('Failed to load departures:', err);
     }
 }
+$('when-input').addEventListener('change', (e) => setWhen(e.target.value));
+$('when-now').addEventListener('click', () => setWhen(''));
+setupWhen();
+$('when-now').hidden = !state.at;
 $('station-input').addEventListener('change', (e) => pickStation(e.target.value));
 $('station-input').addEventListener('focus', (e) => e.target.select());
 

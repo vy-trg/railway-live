@@ -80,6 +80,13 @@
                 <input id="station-input" class="station-input" list="station-list" autocomplete="off" placeholder="Type a station, e.g. Roma Street">
                 <datalist id="station-list"></datalist>
                 <p id="station-error" class="field-error" role="alert" hidden></p>
+                <!-- Now, or plan ahead: any time in the next 7 days -->
+                <div class="when">
+                    <label class="field-label" for="when-input">Leaving</label>
+                    <input id="when-input" class="station-input" type="datetime-local" step="300">
+                    <button id="when-now" type="button" class="link-btn" hidden>Back to now</button>
+                </div>
+                <p id="when-note" class="filter-note" role="status"></p>
                 <ul id="board" class="board" aria-busy="true"><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li></ul>
             </section>
 

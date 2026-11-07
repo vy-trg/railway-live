@@ -4,7 +4,7 @@ import { getVehicles, getTripUpdates, getAlerts, nowSec } from './realtime.js';
 import * as db from './db/queries.js';
 import { buildLines } from './lines.js';
 import { enrichTrains, summarize, buildBoard, railAlerts, buildTripProgress } from './live.js';
-import { brisbaneClock } from './schedule.js';
+import { brisbaneClock, parseLocalTime } from './schedule.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
@@ -119,6 +119,24 @@ app.get('/api/departures', handle(async (req, res) => {
         return res.status(400).json({ error: 'Unknown station' });
     }
     const [updates, vehicles, now] = await Promise.all([getTripUpdates(), getVehicles(), nowSec()]);
+
+    // Planning ahead: ?at=2026-11-09T18:30 shows the timetable from then, up to a week away
+    if (req.query.at !== undefined) {
+        const at = parseLocalTime(String(req.query.at));
+        if (!at) return res.status(400).json({ error: 'Pick a date and time' });
+        if (at.epoch < now - 3600 || at.epoch > now + 7 * 86400) {
+            return res.status(400).json({ error: 'Pick a time between now and 7 days ahead' });
+        }
+        const rows = await db.getDepartures(station, at.date, at.secs, at.secs + 3 * 3600, 12);
+        return res.json({
+            station,
+            planned: true,
+            at: String(req.query.at),
+            stale: updates.stale,
+            departures: buildBoard(rows, updates.data, at.secs),
+        });
+    }
+
     const clock = brisbaneClock(now);
     // Look back 30 minutes so late trains that haven't left yet still show
     const rows = await db.getDepartures(station, clock.date, clock.secs - 1800, clock.secs + 7200, 40);
@@ -133,6 +151,7 @@ app.get('/api/departures', handle(async (req, res) => {
     }]));
     res.json({
         station,
+        planned: false,
         stale: updates.stale,
         departures: buildBoard(rows, updates.data, clock.secs, byTrip).slice(0, 8),
     });
