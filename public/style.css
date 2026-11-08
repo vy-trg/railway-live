@@ -444,3 +444,6 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 
 /* Bus, ferry and tram departures show their route number, e.g. "598 Garden City interchange" */
 .route-no { font-weight: 800; margin-right: 2px; }
+
+/* A service that passes through the searched place (rather than ending there) */
+.train .via { grid-column: 1 / -1; font-size: 0.8rem; color: var(--muted); }

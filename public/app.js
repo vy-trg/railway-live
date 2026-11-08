@@ -59,6 +59,7 @@ async function getJson(url) {
 const params = new URLSearchParams(location.search);
 const state = {
     line: params.get('line') || '',
+    place: params.get('place') || '', // free-text place, e.g. 'Springfield'
     mode: ['train', 'tram', 'ferry', 'bus'].includes(params.get('mode')) ? params.get('mode') : '', // '' = all
     station: params.get('station') || DEFAULT_STATION,
     tab: ['trains', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
@@ -70,6 +71,7 @@ function saveUrl() {
     const p = new URLSearchParams();
     if (state.mode) p.set('mode', state.mode);
     if (state.line) p.set('line', state.line);
+    if (state.place) p.set('place', state.place);
     if (state.station !== DEFAULT_STATION) p.set('station', state.station);
     if (state.tab !== 'trains') p.set('tab', state.tab);
     if (state.at) p.set('at', state.at);
@@ -127,8 +129,20 @@ const trainMarkers = new Map();
 let lines = [];
 let lastTrains = [];
 
+// Routes found for the typed place: going there (to) or calling there on the way (via)
+let placeRoutes = null; // { to: Set, via: Set } or null
+
+function placeMatch(train) {
+    const q = state.place.toLowerCase();
+    if ((train.headsign ?? '').toLowerCase().includes(q)) return 'to';
+    if (placeRoutes?.to.has(train.routeId)) return 'to';
+    if (placeRoutes?.via.has(train.routeId)) return 'via';
+    return null;
+}
+
 function routeVisible(train) {
     if (state.mode && train.mode !== state.mode) return false;
+    if (state.place) return placeMatch(train) !== null;
     if (!state.line) return true;
     const line = lines.find((l) => l.name === state.line);
     return !line || line.routeIds.includes(train.routeId);
@@ -229,11 +243,15 @@ function renderTrainList() {
     $('train-list').removeAttribute('aria-busy');
     const list = $('train-list');
     const trains = lastTrains.filter(routeVisible)
-        // Late trains first: that's what someone checking the network wants to know
-        .sort((a, b) => (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || (b.delaySec ?? 0) - (a.delaySec ?? 0));
+        // Searching a place: services going there first, then ones passing through.
+        // Otherwise late trains first: that's what someone checking the network wants to know
+        .sort((a, b) => (state.place ? (placeMatch(a) === 'to' ? 0 : 1) - (placeMatch(b) === 'to' ? 0 : 1) : 0)
+            || (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || (b.delaySec ?? 0) - (a.delaySec ?? 0));
     const noun = (n) => (state.mode ? MODE_NOUN[state.mode][n === 1 ? 0 : 1] : n === 1 ? 'service' : 'services');
     if (trains.length === 0) {
-        list.innerHTML = state.line
+        list.innerHTML = state.place
+            ? `<li class="empty">No ${noun(0)} going to or through “${escapeHtml(state.place)}” right now.${state.mode !== 'bus' ? ' Try Buses, or' : ''} <button type="button" class="link-btn" data-clear-line>show everything</button></li>`
+            : state.line
             ? `<li class="empty">No ${escapeHtml(state.line)} services are running right now. <button type="button" class="link-btn" data-clear-line>Show all lines</button></li>`
             : `<li class="empty">No ${noun(0)} are running right now. Services usually start again around 5am.</li>`;
         $('filter-note').textContent = '';
@@ -244,14 +262,17 @@ function renderTrainList() {
         <li><button class="train" type="button" data-trip="${escapeHtml(t.tripId)}" aria-pressed="${t.tripId === state.selected}" style="--c:${escapeHtml(t.color)}">
           <span class="bar"></span>
           <span class="to">To ${escapeHtml(t.headsign ?? 'unknown')}</span>
+          ${state.place && placeMatch(t) === 'via' ? `<span class="via">via ${escapeHtml(state.place)}</span>` : ''}
           ${statusHtml(t.level, t.delayText)}
           <span class="meta">${t.mode !== 'train' ? `${t.mode === 'tram' ? 'G:link' : t.mode === 'ferry' ? 'Ferry' : `Bus ${escapeHtml(t.routeShort ?? '')}`} · ` : ''}${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
         </button></li>`).join('')
         + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more ${noun(hidden)}</button></li>` : '');
     staggerOnce(list);
     // Say what the filter did, e.g. "Showing 6 Springfield trains"
-    $('filter-note').textContent = state.line
-        ? `Showing ${trains.length} ${state.line} ${noun(trains.length)}` : '';
+    const going = state.place ? trains.filter((t) => placeMatch(t) === 'to').length : 0;
+    $('filter-note').textContent = state.place
+        ? `${going} ${noun(going)} going to ${state.place}, ${trains.length - going} passing through${state.mode !== 'bus' ? ' · buses are under Buses' : ''}`
+        : state.line ? `Showing ${trains.length} ${state.line} ${noun(trains.length)}` : '';
 }
 $('train-list').addEventListener('click', (e) => {
     if (e.target.closest('[data-clear-line]')) {
@@ -463,10 +484,12 @@ function renderSummary(s) {
 // ---------- Line filter ----------
 async function loadLines() {
     lines = await getJson('/api/lines');
-    $('line-list').innerHTML = lines.map((l) => `<option value="${escapeHtml(l.name)}"></option>`).join('');
+    // The label says where a bus, ferry or tram goes, so typing "Springfield" also finds Bus 526
+    $('line-list').innerHTML = lines.map((l) => `<option value="${escapeHtml(l.name)}"${l.description ? ` label="${escapeHtml(l.description)}"` : ''}></option>`).join('');
     if (state.line && !lines.some((l) => l.name === state.line)) state.line = '';
     $('line-filter').value = state.line;
     $('line-clear').hidden = !state.line;
+    if (state.place) applyPlace(state.place);
 }
 
 // A bus route's line is drawn only while you filter to it (469 bus routes would cover the map)
@@ -488,13 +511,37 @@ async function drawBusTrack(line) {
 }
 
 function applyLine(name) {
-    const match = lines.find((l) => l.name.toLowerCase() === name.trim().toLowerCase());
+    const text = name.trim();
+    const match = lines.find((l) => l.name.toLowerCase() === text.toLowerCase());
+    // Not a line name: treat it as a place ("Springfield", "Garden City")
+    if (!match && text.length >= 2) { applyPlace(text); return; }
+    state.place = '';
+    placeRoutes = null;
     state.line = match ? match.name : '';
     $('line-filter').value = state.line;
     $('line-clear').hidden = !state.line;
     drawBusTrack(match);
     // Picking a bus line switches to the Buses view (and back to All for other lines)
     if (match && (match.mode === 'bus') !== (state.mode === 'bus')) { applyMode(match.mode === 'bus' ? 'bus' : ''); return; }
+    saveUrl();
+    drawTrains();
+    renderTrainList();
+}
+async function applyPlace(text) {
+    state.line = '';
+    state.place = text;
+    busTrack.clearLayers();
+    $('line-filter').value = text;
+    $('line-clear').hidden = false;
+    try {
+        const found = await getJson(`/api/places?q=${encodeURIComponent(text)}`);
+        if (state.place !== text) return; // typed something else meanwhile
+        placeRoutes = { to: new Set(found.to), via: new Set(found.via) };
+    } catch (err) {
+        placeRoutes = null; // still filters by destination name
+        console.error('Place search failed:', err);
+    }
+    listLimit = LIST_STEP;
     saveUrl();
     drawTrains();
     renderTrainList();
@@ -757,7 +804,8 @@ function applyMode(mode) {
     for (const b of document.querySelectorAll('#mode-seg button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
     // A line from another kind of service would hide everything, so drop it
     const line = lines.find((l) => l.name === state.line);
-    if (mode && line && line.mode !== mode) applyLine('');
+    // e.g. the Springfield train line, then Buses: keep looking for Springfield, as a place
+    if (mode && line && line.mode !== mode) { state.line = ''; applyPlace(line.name); }
     if (mode !== 'bus') busTrack.clearLayers();
     listLimit = LIST_STEP;
     saveUrl();

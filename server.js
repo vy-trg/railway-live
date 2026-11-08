@@ -122,7 +122,7 @@ app.get('/api/summary', handle(async (req, res) => {
 // Lines for the filter: name, TransLink colour and the routes they cover
 app.get('/api/lines', handle(async (req, res) => {
     const { lines } = await getStatic();
-    res.json(lines.map((l) => ({ name: l.name, mode: l.mode, color: `#${l.color}`, routeIds: l.routeIds })));
+    res.json(lines.map((l) => ({ name: l.name, mode: l.mode, description: l.description, color: `#${l.color}`, routeIds: l.routeIds })));
 }));
 
 // Stations for the picker. Without ?q: train stations, tram stops and ferry terminals (about 250).
@@ -239,6 +239,23 @@ app.get('/api/stats', handle(async (req, res) => {
 // Coloured track lines for the map. The timetable doesn't change while the app runs,
 // so browsers may keep this for an hour.
 let shapesCache = null;
+// Routes that go to or through a place, e.g. /api/places?q=springfield -> { to: [...], via: [...] }
+// "to": a destination (headsign) or the route's name matches; "via": one of its stops matches.
+let routePlaces = null;
+app.get('/api/places', handle(async (req, res) => {
+    const q = String(req.query.q ?? '').trim().toLowerCase();
+    if (q.length < 2) return res.status(400).json({ error: 'Type at least 2 letters' });
+    const { routes } = await getStatic();
+    if (!routePlaces) {
+        const names = new Map(routes.map((r) => [r.route_id, r.long_name.toLowerCase()]));
+        routePlaces = (await db.getRoutePlaces()).map((r) => ({ id: r.route_id, to: `${r.headsigns}|${names.get(r.route_id) ?? ''}`, via: r.stops }));
+    }
+    const to = routePlaces.filter((r) => r.to.includes(q)).map((r) => r.id);
+    const toSet = new Set(to);
+    const via = routePlaces.filter((r) => !toSet.has(r.id) && r.via.includes(q)).map((r) => r.id);
+    res.set('Cache-Control', 'public, max-age=3600').json({ to, via });
+}));
+
 // Track lines for trains, tram and ferries (drawn all the time). Bus routes are drawn one at a
 // time, when you filter to that bus: /api/shapes?route=598-4
 app.get('/api/shapes', handle(async (req, res) => {

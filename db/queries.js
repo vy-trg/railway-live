@@ -73,6 +73,21 @@ export async function getDepartures(stationId, date, fromSecs, toSecs, limit = 1
   return rows;
 }
 
+// Every place each route goes to or through: its name, its destinations and every station or stop
+// it calls at. Used to find routes by place ("Springfield") instead of by number.
+export async function getRoutePlaces() {
+  const { rows } = await pool.query(
+    `SELECT t.route_id, string_agg(DISTINCT lower(COALESCE(sta.name, s.name)), '|') AS stops,
+            string_agg(DISTINCT lower(t.headsign), '|') AS headsigns
+     FROM trips t
+     JOIN pattern_stops ps ON ps.pattern_id = t.pattern_id
+     JOIN stops s ON s.stop_id = ps.stop_id
+     LEFT JOIN stations sta ON sta.station_id = s.station_id
+     GROUP BY t.route_id`
+  );
+  return rows;
+}
+
 export async function getRouteShapes() {
   const { rows } = await pool.query(
     'SELECT s.route_id, r.color, s.coords FROM route_shapes s JOIN routes r ON r.route_id = s.route_id'
