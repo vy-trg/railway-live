@@ -12,7 +12,7 @@ This document answers the planning questions from my 5 Oct design review (update
 | **Access requirements for the live data?** | None technically: no API key or account. The data is licensed CC BY 4.0, so TransLink must be credited (in the README and map). Use is subject to TransLink's open data terms. |
 | **Rate limits?** | I didn't find a published rate limit. I designed as if there were one: the server calls TransLink at most once per 30 s however many users are online, with a 10 s timeout and stale-data fallback. |
 | **Polling or WebSockets?** | Polling every 30 s, plus an immediate refresh when the tab becomes visible. The feed itself only updates about every 30 s, so push would not make data fresher, and polling works through Render's free plan without long-lived connections. |
-| **Backend server, and a database or something like SQLite?** | Node.js 22 + Express 5, with PostgreSQL on Neon. Postgres holds the train, tram and ferry timetable (about 320,000 stop times) and the delay history. SQLite was ruled out because Render's free disk is wiped on every deploy and restart. |
+| **Backend server, and a database or something like SQLite?** | Node.js 22 + Express 5, with PostgreSQL on Neon. Postgres holds the full SEQ timetable (3.6 million stop times, stored as about 274,000 trip-pattern rows so it fits Neon's free 0.5 GB) and the delay history. SQLite was ruled out because Render's free disk is wiped on every deploy and restart. |
 
 ### Hosting options considered
 
@@ -149,6 +149,8 @@ stateDiagram-v2
 | Decision | Why |
 |---|---|
 | Server in front of TransLink | The browser gets small JSON instead of protobuf, and TransLink is called at most once per 30 s per feed however many people have the map open |
+| Trip patterns instead of one row per stop time | Most trips of a route repeat the same stops and gaps at a different start time. Storing each pattern once plus a start time per trip cut 3.6 million rows to about 274,000, so all buses fit in the free database (64 MB instead of about 750 MB) |
+| Bus feeds fetched only when needed | The bus feed is many times bigger than rail; it is only fetched for the Buses view, a bus stop's departures or a bus journey |
 | Timetable in Postgres, realtime in memory | The timetable is large and changes rarely; live positions change every 30 s and are only needed for now |
 | One query per refresh with `= ANY($1)` | About 60 vehicles need route and stop names; one round trip to Neon instead of 60 |
 | Each mode fetched separately | If the ferry feed fails, trains and trams still show |

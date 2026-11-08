@@ -1,4 +1,4 @@
-const MODE_ORDER = { train: 0, tram: 1, ferry: 2 };
+const MODE_ORDER = { train: 0, tram: 1, ferry: 2, bus: 3 };
 
 // TransLink rail routes are named by their two ends, e.g. "Brisbane City - Springfield" or
 // "Springfield - Caboolture". A "line" here is one end that isn't Brisbane City, and it
@@ -8,8 +8,8 @@ export function buildLines(routes) {
   const lines = new Map();
   for (const r of routes) {
     // Trams and ferries: each route is its own line, e.g. "G:link" or "Ferry F1"
-    if (r.mode === 'tram' || r.mode === 'ferry') {
-      const name = r.mode === 'tram' ? 'G:link' : `Ferry ${r.short_name}`;
+    if (r.mode === 'tram' || r.mode === 'ferry' || r.mode === 'bus') {
+      const name = r.mode === 'tram' ? 'G:link' : r.mode === 'ferry' ? `Ferry ${r.short_name}` : `Bus ${r.short_name}`;
       lines.set(name, { name, mode: r.mode, routeIds: [r.route_id], colors: new Map([[r.color, 1]]) });
       continue;
     }

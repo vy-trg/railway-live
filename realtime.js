@@ -84,6 +84,28 @@ export const getTripUpdates = makeFeed({
     merge: (lists) => new Map(lists.flat().map((t) => [t.tripId, t])),
 });
 
+// Buses: over a thousand at peak, and a much bigger feed. Kept separate so they are only fetched
+// when someone asks for buses (the Buses view, a bus stop's departures, a bus journey).
+export const getBusVehicles = makeFeed({
+    name: 'bus positions',
+    sources: [{ url: `${BASE}/VehiclePositions/Bus`, file: 'vehicle-positions-bus.pb' }],
+    parse: parseFeed,
+});
+
+export const getBusTripUpdates = makeFeed({
+    name: 'bus trip updates',
+    sources: [{ url: `${BASE}/TripUpdates/Bus`, file: 'trip-updates-bus.pb' }],
+    parse: parseTripUpdates,
+    merge: (lists) => new Map(lists.flat().map((t) => [t.tripId, t])),
+});
+
+// Trip updates for every mode, for the delay recorder. If the bus feed fails, the rest is still recorded.
+export async function getAllTripUpdates() {
+    const empty = { stale: true, data: new Map() };
+    const [main, bus] = await Promise.all([getTripUpdates(), getBusTripUpdates().catch(() => empty)]);
+    return { stale: main.stale || bus.stale, data: new Map([...main.data, ...bus.data]) };
+}
+
 // Alerts change rarely, so 5 minutes is plenty
 export const getAlerts = makeFeed({
     name: 'alerts',

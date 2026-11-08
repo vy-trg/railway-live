@@ -59,7 +59,7 @@ async function getJson(url) {
 const params = new URLSearchParams(location.search);
 const state = {
     line: params.get('line') || '',
-    mode: ['train', 'tram', 'ferry'].includes(params.get('mode')) ? params.get('mode') : '', // '' = all
+    mode: ['train', 'tram', 'ferry', 'bus'].includes(params.get('mode')) ? params.get('mode') : '', // '' = all
     station: params.get('station') || DEFAULT_STATION,
     tab: ['trains', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
     at: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(params.get('at') ?? '') ? params.get('at') : '', // planned time, '' = now
@@ -94,7 +94,8 @@ for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
 // ---------- Map ----------
 // The map can't be dragged far from South East Queensland; at the edge it pulls back like a rubber band
 const SEQ_BOUNDS = L.latLngBounds([-28.6, 151.6], [-25.9, 154.0]);
-const map = L.map('map', { zoomControl: false, maxBounds: SEQ_BOUNDS, maxBoundsViscosity: 0.6, minZoom: 8 })
+// preferCanvas: a thousand bus dots draw on one canvas instead of a thousand SVG elements
+const map = L.map('map', { preferCanvas: true, zoomControl: false, maxBounds: SEQ_BOUNDS, maxBoundsViscosity: 0.6, minZoom: 8 })
     .setView([-27.5, 152.98], 10);
 L.control.zoom({ position: 'topleft' }).addTo(map);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -135,9 +136,11 @@ function routeVisible(train) {
 
 function markerStyle(t) {
     const selected = t.tripId === state.selected;
+    // Buses are smaller: there can be a thousand of them
+    const bus = t.mode === 'bus';
     return {
-        radius: selected ? 10 : 7,
-        weight: selected ? 4 : 3,
+        radius: selected ? 10 : bus ? 5 : 7,
+        weight: selected ? 4 : bus ? 2 : 3,
         color: '#fffaf3', // white ring keeps every dot readable on top of the coloured tracks
         fillColor: cssVar(LEVEL_VARS[t.level] ?? '--muted'),
         fillOpacity: 1,
@@ -161,7 +164,8 @@ function glide(marker, to) {
 
 // Trains are circles (as before). Trams are rounded squares and ferries diamonds, so the
 // kind of service is clear without relying on colour alone.
-const MODE_NOUN = { train: ['train', 'trains'], tram: ['tram', 'trams'], ferry: ['ferry', 'ferries'] };
+const MODE_NOUN = { train: ['train', 'trains'], tram: ['tram', 'trams'], ferry: ['ferry', 'ferries'], bus: ['bus', 'buses'] };
+const isCircle = (mode) => mode === 'train' || mode === 'bus';
 function shapeIcon(t) {
     const selected = t.tripId === state.selected;
     const size = selected ? 20 : 15;
@@ -184,11 +188,11 @@ function drawTrains() {
         const existing = trainMarkers.get(t.id);
         if (existing) {
             glide(existing, [t.lat, t.lng]);
-            if (t.mode === 'train') existing.setStyle(markerStyle(t));
+            if (isCircle(t.mode)) existing.setStyle(markerStyle(t));
             else existing.setIcon(shapeIcon(t));
             existing.setTooltipContent(escapeHtml(tip));
         } else {
-            const m = (t.mode === 'train'
+            const m = (isCircle(t.mode)
                 ? L.circleMarker([t.lat, t.lng], markerStyle(t))
                 : L.marker([t.lat, t.lng], { icon: shapeIcon(t), keyboard: false })).addTo(map)
                 .bindTooltip(escapeHtml(tip), { direction: 'top', offset: [0, -8] });
@@ -241,7 +245,7 @@ function renderTrainList() {
           <span class="bar"></span>
           <span class="to">To ${escapeHtml(t.headsign ?? 'unknown')}</span>
           ${statusHtml(t.level, t.delayText)}
-          <span class="meta">${t.mode !== 'train' ? `${t.mode === 'tram' ? 'G:link' : 'Ferry'} · ` : ''}${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
+          <span class="meta">${t.mode !== 'train' ? `${t.mode === 'tram' ? 'G:link' : t.mode === 'ferry' ? 'Ferry' : `Bus ${escapeHtml(t.routeShort ?? '')}`} · ` : ''}${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
         </button></li>`).join('')
         + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more ${noun(hidden)}</button></li>` : '');
     staggerOnce(list);
@@ -424,7 +428,10 @@ setInterval(renderFeedStatus, 5000);
 // ---------- Trains + numbers ----------
 async function loadLive() {
     try {
-        const [trains, summary] = await Promise.all([getJson('/api/trains'), getJson('/api/summary')]);
+        // Buses come from their own (much bigger) feed, only while the Buses view is on
+        const mode = state.mode;
+        const [trains, summary] = await Promise.all([getJson(mode === 'bus' ? '/api/trains?mode=bus' : '/api/trains'), getJson('/api/summary')]);
+        if (mode !== state.mode) return; // switched view while this was loading
         lastTrains = trains.trains;
         drawTrains();
         renderTrainList();
@@ -462,11 +469,32 @@ async function loadLines() {
     $('line-clear').hidden = !state.line;
 }
 
+// A bus route's line is drawn only while you filter to it (469 bus routes would cover the map)
+const busTrack = L.layerGroup().addTo(map);
+async function drawBusTrack(line) {
+    busTrack.clearLayers();
+    if (!line || line.mode !== 'bus') return;
+    try {
+        for (const routeId of line.routeIds) {
+            for (const s of await getJson(`/api/shapes?route=${encodeURIComponent(routeId)}`)) {
+                L.polyline(s.coords, { color: '#fffaf3', weight: 6, opacity: 0.9, interactive: false }).addTo(busTrack);
+                L.polyline(s.coords, { color: s.color, weight: 3, opacity: 0.9, interactive: false }).addTo(busTrack);
+            }
+        }
+        if (busTrack.getLayers().length) map.flyToBounds(L.featureGroup(busTrack.getLayers()).getBounds(), { padding: [30, 30], duration: reduceMotion() ? 0 : 0.8 });
+    } catch (err) {
+        console.error('Failed to load the bus route:', err);
+    }
+}
+
 function applyLine(name) {
     const match = lines.find((l) => l.name.toLowerCase() === name.trim().toLowerCase());
     state.line = match ? match.name : '';
     $('line-filter').value = state.line;
     $('line-clear').hidden = !state.line;
+    drawBusTrack(match);
+    // Picking a bus line switches to the Buses view (and back to All for other lines)
+    if (match && (match.mode === 'bus') !== (state.mode === 'bus')) { applyMode(match.mode === 'bus' ? 'bus' : ''); return; }
     saveUrl();
     drawTrains();
     renderTrainList();
@@ -478,10 +506,34 @@ $('line-clear').addEventListener('click', () => applyLine(''));
 let stations = [];
 async function loadStations() {
     stations = await getJson('/api/stations');
+    // A bus stop from the link (?station=5341) isn't in the short list: look it up
+    if (state.station && !stations.some((s) => s.id === state.station)) {
+        const found = await getJson(`/api/stations?q=${encodeURIComponent(state.station)}`).catch(() => []);
+        const exact = found.find((s) => s.id === state.station);
+        if (exact) stations.push(exact);
+    }
     if (!stations.some((s) => s.id === state.station)) state.station = DEFAULT_STATION;
     $('station-list').innerHTML = stations.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
     $('station-input').value = stations.find((s) => s.id === state.station)?.name ?? '';
 }
+
+// Bus stops (12,000 of them) aren't in the list up front: as you type, matching stops are fetched and added
+let stationSearch = null;
+$('station-input').addEventListener('input', (e) => {
+    clearTimeout(stationSearch);
+    const q = e.target.value.trim();
+    if (q.length < 2) return;
+    stationSearch = setTimeout(async () => {
+        try {
+            const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}`);
+            for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
+            $('station-list').innerHTML = found.concat(stations.filter((s) => !found.includes(s)).slice(0, 300))
+                .map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
+        } catch (err) {
+            console.error('Station search failed:', err);
+        }
+    }, 250);
+});
 
 function pickStation(text) {
     const typed = text.trim().toLowerCase().replace(/ station$/, '');
@@ -490,7 +542,7 @@ function pickStation(text) {
     const error = $('station-error');
     if (!match) {
         // Say what to do, don't blame the typing
-        error.textContent = `We couldn’t find a station called “${text.trim()}”. Pick one from the list as you type.`;
+        error.textContent = `We couldn’t find a station or stop called “${text.trim()}”. Pick one from the list as you type, or type a stop number.`;
         error.hidden = false;
         return;
     }
@@ -546,7 +598,7 @@ async function loadBoard() {
         board.innerHTML = departures.map((d) => `
             <li class="${d.status === 'cancelled' ? 'cancelled' : ''}">
               <span class="time">${d.expected ? `<small>${escapeHtml(d.scheduled)}</small>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</span>
-              <span class="dest"><span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${escapeHtml(d.headsign)}</span>
+              <span class="dest"><span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${d.mode && d.mode !== 'train' ? `<b class="route-no">${escapeHtml(d.routeShort)}</b> ` : ''}${escapeHtml(d.headsign)}</span>
                 ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${d.minutesAway} min` : ''}</span>` : ''}</span>
               <span class="right">${statusHtml(d.status, d.statusText)}${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
             </li>`).join('');
@@ -700,13 +752,23 @@ document.querySelector('.seg').addEventListener('click', (e) => {
 
 // ---------- Kind of service: All / Trains / Tram / Ferries ----------
 function applyMode(mode) {
+    const busChanged = (mode === 'bus') !== (state.mode === 'bus');
     state.mode = mode;
     for (const b of document.querySelectorAll('#mode-seg button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
     // A line from another kind of service would hide everything, so drop it
     const line = lines.find((l) => l.name === state.line);
     if (mode && line && line.mode !== mode) applyLine('');
+    if (mode !== 'bus') busTrack.clearLayers();
     listLimit = LIST_STEP;
     saveUrl();
+    if (busChanged) {
+        // Buses are a different feed: show the list loading, then fetch
+        lastTrains = [];
+        drawTrains();
+        $('train-list').innerHTML = '<li class="skeleton-row"></li><li class="skeleton-row"></li><li class="skeleton-row"></li>';
+        loadLive();
+        return;
+    }
     drawTrains();
     renderTrainList();
     // The G:link is on the Gold Coast, far from Brisbane: zoom the map to what is now showing

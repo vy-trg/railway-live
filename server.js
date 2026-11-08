@@ -1,9 +1,9 @@
 import express from 'express';
 import { isActive } from './feed.js';
-import { getVehicles, getTripUpdates, getAlerts, nowSec } from './realtime.js';
+import { getVehicles, getTripUpdates, getBusVehicles, getBusTripUpdates, getAlerts, nowSec } from './realtime.js';
 import * as db from './db/queries.js';
 import { buildLines } from './lines.js';
-import { enrichTrains, summarize, buildBoard, railAlerts, buildTripProgress } from './live.js';
+import { enrichTrains, nextStop, summarize, buildBoard, railAlerts, buildTripProgress } from './live.js';
 import { brisbaneClock, parseLocalTime, formatClock } from './schedule.js';
 import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import helmet from 'helmet';
@@ -48,31 +48,48 @@ async function getStatic() {
     if (!staticData) {
         const [routes, stations] = await Promise.all([db.getRoutes(), db.getStations()]);
         const lines = buildLines(routes);
+        const busRoutes = new Set(routes.filter((r) => r.mode === 'bus').map((r) => r.route_id));
+        const allStops = await db.getStopIds();
         staticData = {
             routes, stations, lines,
             routeIds: new Set(routes.map((r) => r.route_id)),
             stationIds: new Set(stations.map((s) => s.id)),
-            stopIds: new Set(await db.getStopIds()),
+            stopIds: new Set(allStops.map((s) => s.stop_id)),
+            busRoutes,
+            // Trains, tram and ferries only: the station list, the alerts and the stats stay as they were
+            mainStations: stations.filter((s) => s.modes.split(',').some((m) => m && m !== 'bus')),
+            mainRouteIds: new Set(routes.filter((r) => r.mode !== 'bus').map((r) => r.route_id)),
+            mainLines: lines.filter((l) => l.mode !== 'bus'),
         };
+        staticData.mainStationIds = new Set(staticData.mainStations.map((s) => s.id));
+        staticData.mainStopIds = new Set(allStops.filter((s) => staticData.mainStationIds.has(s.station_id)).map((s) => s.stop_id));
     }
     return staticData;
 }
 
-// Trains on the map with route, next stop and delay. Shared by /api/trains and /api/summary.
-async function getLiveTrains() {
-    const [vehicles, updates, now] = await Promise.all([getVehicles(), getTripUpdates(), nowSec()]);
+// Services on the map with route, next stop and delay. Shared by /api/trains and /api/summary.
+// bus = false: trains, tram and ferries. bus = true: buses only (a separate, much bigger feed).
+async function getLiveTrains(bus = false) {
+    const [vehicles, updates, now, data] = await Promise.all([
+        bus ? getBusVehicles() : getVehicles(),
+        bus ? getBusTripUpdates() : getTripUpdates(),
+        nowSec(),
+        getStatic(),
+    ]);
     const trips = await db.getTrips(vehicles.data.map((v) => v.tripId).filter(Boolean));
+    // Names only for the stops we show (next stop, or where it is now), not every stop in the feed
     const stopIds = new Set();
     for (const v of vehicles.data) {
         if (v.stopId) stopIds.add(v.stopId);
-        for (const s of updates.data.get(v.tripId)?.stops ?? []) stopIds.add(s.stopId);
+        const next = nextStop(updates.data.get(v.tripId), now, data.stopIds);
+        if (next) stopIds.add(next.stopId);
     }
-    const stopNames = await db.getStopNames([...stopIds].filter(Boolean));
+    const stopNames = await db.getStopNames([...stopIds]);
     return {
         updatedAt: new Date(vehicles.updatedAt).toISOString(),
         feedTime: vehicles.feedTime,
         stale: vehicles.stale || updates.stale,
-        trains: enrichTrains(vehicles.data, updates.data, trips, stopNames, now),
+        trains: enrichTrains(vehicles.data, updates.data, trips, stopNames, now, data.stopIds),
     };
 }
 
@@ -92,7 +109,7 @@ app.get('/api/health', (req, res) => {
 
 // Every train on the map. If the feed is down, the last known positions come back with stale: true.
 app.get('/api/trains', handle(async (req, res) => {
-    res.json(await getLiveTrains());
+    res.json(await getLiveTrains(req.query.mode === 'bus'));
 }));
 
 // The numbers across the top of the page
@@ -107,9 +124,24 @@ app.get('/api/lines', handle(async (req, res) => {
     res.json(lines.map((l) => ({ name: l.name, mode: l.mode, color: `#${l.color}`, routeIds: l.routeIds })));
 }));
 
+// Stations for the picker. Without ?q: train stations, tram stops and ferry terminals (about 250).
+// With ?q=…: also search over 12,000 bus stops by name or stop number, best matches first, at most 20.
+const stationLabel = (s) => (s.modes === 'bus' ? `${s.name} (stop ${s.id})` : s.name.replace(/ station$/, ''));
 app.get('/api/stations', handle(async (req, res) => {
-    const { stations } = await getStatic();
-    res.json(stations.map((s) => ({ id: s.id, name: s.name.replace(/ station$/, '') })));
+    const { stations, mainStations } = await getStatic();
+    const q = String(req.query.q ?? '').trim().toLowerCase();
+    if (!q) return res.json(mainStations.map((s) => ({ id: s.id, name: stationLabel(s), modes: s.modes })));
+    if (q.length < 2) return res.status(400).json({ error: 'Type at least 2 letters' });
+    const matches = stations
+        .map((s) => {
+            const name = s.name.toLowerCase();
+            const rank = s.id === q ? 0 : name.startsWith(q) ? 1 : name.includes(` ${q}`) ? 2 : name.includes(q) ? 3 : -1;
+            return { s, rank };
+        })
+        .filter((m) => m.rank >= 0)
+        .sort((a, b) => a.rank - b.rank || (a.s.modes === 'bus') - (b.s.modes === 'bus') || a.s.name.localeCompare(b.s.name))
+        .slice(0, 20);
+    res.json(matches.map(({ s }) => ({ id: s.id, name: stationLabel(s), modes: s.modes })));
 }));
 
 // Next departures from one station for the next 2 hours: timetable + live delays
@@ -119,7 +151,17 @@ app.get('/api/departures', handle(async (req, res) => {
     if (!stationIds.has(station)) {
         return res.status(400).json({ error: 'Unknown station' });
     }
-    const [updates, vehicles, now] = await Promise.all([getTripUpdates(), getVehicles(), nowSec()]);
+    // Bus feeds are fetched only for stops that buses use
+    const { stations } = await getStatic();
+    const hasBus = stations.find((s) => s.id === station)?.modes.includes('bus');
+    const [main, mainVehicles, bus, busVehicles, now] = await Promise.all([
+        getTripUpdates(), getVehicles(),
+        // If the bus feed is down, timetable departures still show (without live bus delays)
+        hasBus ? getBusTripUpdates().catch(() => null) : null, hasBus ? getBusVehicles().catch(() => null) : null,
+        nowSec(),
+    ]);
+    const updates = { stale: main.stale || Boolean(bus?.stale), data: bus ? new Map([...main.data, ...bus.data]) : main.data };
+    const vehicles = { data: busVehicles ? [...mainVehicles.data, ...busVehicles.data] : mainVehicles.data };
 
     // Planning ahead: ?at=2026-11-09T18:30 shows the timetable from then, up to a week away
     if (req.query.at !== undefined) {
@@ -167,7 +209,7 @@ app.get('/api/stats', handle(async (req, res) => {
     const cached = statsCache.get(days);
     if (cached && Date.now() - cached.at < 5 * 60_000) return res.json(cached.body);
 
-    const [{ lines, routes }, now] = await Promise.all([getStatic(), nowSec()]);
+    const [{ mainLines: lines, routes }, now] = await Promise.all([getStatic(), nowSec()]);
     const raw = await db.getDelayStats(serviceDate(now), days, ON_TIME_SEC);
     const routeById = new Map(routes.map((r) => [r.route_id, r]));
     const shape = (r) => ({ trips: r.trips, onTimePercent: percent(r.on_time, r.trips) });
@@ -195,13 +237,19 @@ app.get('/api/stats', handle(async (req, res) => {
 
 // Coloured track lines for the map. The timetable doesn't change while the app runs,
 // so browsers may keep this for an hour.
-let shapesJson = null;
+let shapesCache = null;
+// Track lines for trains, tram and ferries (drawn all the time). Bus routes are drawn one at a
+// time, when you filter to that bus: /api/shapes?route=598-4
 app.get('/api/shapes', handle(async (req, res) => {
-    if (!shapesJson) {
-        const rows = await db.getRouteShapes();
-        shapesJson = JSON.stringify(rows.map((r) => ({ routeId: r.route_id, color: `#${r.color}`, coords: r.coords })));
+    const { busRoutes, routeIds } = await getStatic();
+    if (!shapesCache) shapesCache = (await db.getRouteShapes()).map((r) => ({ routeId: r.route_id, color: `#${r.color}`, coords: r.coords }));
+    res.set('Cache-Control', 'public, max-age=3600');
+    if (req.query.route !== undefined) {
+        const route = String(req.query.route);
+        if (!routeIds.has(route)) return res.status(400).json({ error: 'Unknown route' });
+        return res.json(shapesCache.filter((s) => s.routeId === route));
     }
-    res.set('Cache-Control', 'public, max-age=3600').type('json').send(shapesJson);
+    res.json(shapesCache.filter((s) => !busRoutes.has(s.routeId)));
 }));
 
 // One train's journey: every stop with scheduled and expected times
@@ -212,7 +260,8 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
     if (!trip || stops.length === 0) {
         return res.status(404).json({ error: 'Trip not found' });
     }
-    const [updates, now] = await Promise.all([getTripUpdates(), nowSec()]);
+    const empty = { data: new Map() };
+    const [updates, now] = await Promise.all([trip.mode === 'bus' ? getBusTripUpdates().catch(() => empty) : getTripUpdates(), nowSec()]);
     // The service day started at midnight Brisbane time; a trip still running after midnight
     // belongs to yesterday's service day (its times are past 24:00).
     const clock = brisbaneClock(now);
@@ -232,7 +281,9 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
 // Current rail alerts (track closures, lift outages, timetable changes)
 app.get('/api/alerts', handle(async (req, res) => {
     const [alerts, now, data] = await Promise.all([getAlerts(), nowSec(), getStatic()]);
-    res.json({ stale: alerts.stale, alerts: railAlerts(alerts.data, data, now, isActive) });
+    // Trains, tram and ferries only for now; bus stop closures would bury them (there are dozens)
+    const main = { routeIds: data.mainRouteIds, stopIds: data.mainStopIds, stationIds: data.mainStationIds, lines: data.mainLines };
+    res.json({ stale: alerts.stale, alerts: railAlerts(alerts.data, main, now, isActive) });
 }));
 
 app.listen(PORT, () => {

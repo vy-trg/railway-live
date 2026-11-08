@@ -11,11 +11,12 @@ export function nextStop(tripUpdate, nowSec, known) {
 }
 
 // One map marker per train: position + route + where it's heading + how late
-export function enrichTrains(vehicles, tripUpdates, trips, stopNames, nowSec) {
+// knownStops (optional): every stop id passengers use. Defaults to the stops we have names for.
+export function enrichTrains(vehicles, tripUpdates, trips, stopNames, nowSec, knownStops = stopNames) {
     return vehicles.map((v) => {
         const trip = trips.get(v.tripId);
         const tu = tripUpdates.get(v.tripId);
-        const next = nextStop(tu, nowSec, stopNames);
+        const next = nextStop(tu, nowSec, knownStops);
         const delay = next?.delay ?? null;
         const stopId = next?.stopId ?? v.stopId;
         return {
@@ -25,6 +26,7 @@ export function enrichTrains(vehicles, tripUpdates, trips, stopNames, nowSec) {
             lng: v.lng,
             routeId: trip?.route_id ?? v.routeId,
             routeName: trip?.long_name ?? 'Unknown route',
+            routeShort: trip?.short_name ?? null,
             mode: trip?.mode ?? 'train',
             headsign: trip?.headsign?.replace(/ (station|ferry terminal)$/, '') ?? null,
             color: trip ? `#${trip.color}` : '#888888',
@@ -52,7 +54,7 @@ export function summarize(trains) {
     const worst = [...byRoute.values()].sort((a, b) => b.total / b.count - a.total / a.count)[0];
     return {
         running: trains.length,
-        byMode: { train: trains.filter((t) => t.mode === 'train').length, tram: trains.filter((t) => t.mode === 'tram').length, ferry: trains.filter((t) => t.mode === 'ferry').length },
+        byMode: Object.fromEntries(['train', 'tram', 'ferry', 'bus'].map((m) => [m, trains.filter((t) => t.mode === m).length]).filter(([m, n]) => m !== 'bus' || n > 0)),
         withDelayInfo: known.length,
         onTimePercent: known.length ? Math.round(((known.length - late.length) / known.length) * 100) : null,
         avgLateMinutes: late.length ? Math.round((late.reduce((s, t) => s + t.delaySec, 0) / late.length / 60) * 10) / 10 : 0,
@@ -93,6 +95,8 @@ export function buildBoard(rows, tripUpdates, nowClockSecs, vehicles = new Map()
                 statusText: cancelled ? 'Cancelled' : delay === null ? 'Scheduled' : describeDelay(delay),
                 headsign: r.headsign.replace(/ (station|ferry terminal)$/, ''),
                 routeName: r.long_name,
+                routeShort: r.short_name,
+                mode: r.mode,
                 color: `#${r.color}`,
                 textColor: `#${r.text_color}`,
                 platform: r.platform,
