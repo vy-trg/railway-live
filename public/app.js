@@ -430,7 +430,7 @@ async function loadLive() {
     try {
         // Buses come from their own (much bigger) feed, only while the Buses view is on
         const mode = state.mode;
-        const [trains, summary] = await Promise.all([getJson(mode === 'bus' ? '/api/trains?mode=bus' : '/api/trains'), getJson('/api/summary')]);
+        const [trains, summary] = await Promise.all([getJson(mode === 'bus' ? '/api/trains?mode=bus' : '/api/trains'), getJson(mode === 'bus' ? '/api/summary?mode=bus' : '/api/summary')]);
         if (mode !== state.mode) return; // switched view while this was loading
         lastTrains = trains.trains;
         drawTrains();
@@ -451,7 +451,7 @@ function renderSummary(s) {
     // "45 trains · 1 tram · 12 ferries running"; a kind with none running is left out
     const parts = Object.entries(s.byMode ?? { train: s.running })
         .filter(([, n]) => n > 0)
-        .map(([mode, n]) => `<b>${n}</b> ${MODE_NOUN[mode][n === 1 ? 0 : 1]}`);
+        .map(([mode, n]) => `<b>${n.toLocaleString('en-AU')}</b> ${MODE_NOUN[mode][n === 1 ? 0 : 1]}`);
     $('kpi-running').innerHTML = parts.join(' · ') || '<b>0</b> services';
     const onTime = $('kpi-ontime');
     onTime.textContent = s.onTimePercent === null ? '–' : `${s.onTimePercent}%`;

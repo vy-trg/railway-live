@@ -113,8 +113,9 @@ app.get('/api/trains', handle(async (req, res) => {
 }));
 
 // The numbers across the top of the page
+// ?mode=bus: the same numbers for buses (shown while the Buses view is on)
 app.get('/api/summary', handle(async (req, res) => {
-    const live = await getLiveTrains();
+    const live = await getLiveTrains(req.query.mode === 'bus');
     res.json({ updatedAt: live.updatedAt, feedTime: live.feedTime, stale: live.stale, ...summarize(live.trains) });
 }));
 
