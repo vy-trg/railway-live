@@ -447,3 +447,12 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 
 /* A service that passes through the searched place (rather than ending there) */
 .train .via { grid-column: 1 / -1; font-size: 0.8rem; color: var(--muted); }
+
+/* Departures: quick time buttons, and rows you can tap to see the stops */
+.when-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.when-chips button { border: 0; border-radius: 999px; padding: 6px 11px; background: var(--paper); color: var(--ink); font: inherit; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
+.when-chips button:hover { background: var(--sand-2); }
+.board li[data-trip] { cursor: pointer; }
+.board li[data-trip]:hover, .board li.selected { background: color-mix(in srgb, var(--gum) 10%, var(--paper)); }
+.board li[data-trip]:focus-visible { outline: 2px solid var(--gum); outline-offset: -2px; }
+.leaflet-tooltip.station-label { font-weight: 800; }

@@ -147,6 +147,8 @@ export function buildTripProgress(stops, tripUpdate, nowSec, serviceStartEpoch) 
             sequence: s.stop_sequence,
             name: s.name.replace(/ (station|ferry terminal)$/, ''),
             platform: s.platform,
+            lat: s.lat ?? null,
+            lng: s.lng ?? null,
             // Seconds until the train is expected here; the page uses it for "remind me" alerts
             etaSec: expectedEpoch - nowSec,
             scheduled: formatClock(s.departure_secs),

@@ -99,7 +99,7 @@ export async function getRouteShapes() {
 export async function getTripStops(tripId) {
   const { rows } = await pool.query(
     `SELECT st.stop_sequence, st.stop_id, st.arrival_secs, st.departure_secs,
-            COALESCE(sta.name, s.name) AS name, s.platform
+            COALESCE(sta.name, s.name) AS name, s.platform, sta.lat, sta.lng
      FROM stop_times st
      JOIN stops s ON s.stop_id = st.stop_id
      LEFT JOIN stations sta ON sta.station_id = s.station_id

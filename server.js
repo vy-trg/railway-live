@@ -113,10 +113,23 @@ app.get('/api/trains', handle(async (req, res) => {
 }));
 
 // The numbers across the top of the page
-// ?mode=bus: the same numbers for buses (shown while the Buses view is on)
+// The numbers for the view you're on. ?mode=train|tram|ferry|bus: just that kind of service.
+// No mode (All): how many of each are running, buses included (counted from the bus positions feed,
+// which is small), and the on-time share of trains, trams and ferries.
 app.get('/api/summary', handle(async (req, res) => {
-    const live = await getLiveTrains(req.query.mode === 'bus');
-    res.json({ updatedAt: live.updatedAt, feedTime: live.feedTime, stale: live.stale, ...summarize(live.trains) });
+    const mode = String(req.query.mode ?? '');
+    if (mode && !['train', 'tram', 'ferry', 'bus'].includes(mode)) return res.status(400).json({ error: 'Unknown mode' });
+    const live = await getLiveTrains(mode === 'bus');
+    const trains = mode ? live.trains.filter((t) => t.mode === mode) : live.trains;
+    const body = { updatedAt: live.updatedAt, feedTime: live.feedTime, stale: live.stale, mode, ...summarize(trains) };
+    if (mode) {
+        body.byMode = { [mode]: trains.length };
+    } else {
+        const buses = await getBusVehicles().catch(() => null);
+        if (buses) body.byMode.bus = buses.data.length;
+        body.onTimeOf = 'trains, trams and ferries';
+    }
+    res.json(body);
 }));
 
 // Lines for the filter: name, TransLink colour and the routes they cover
@@ -131,7 +144,8 @@ const stationLabel = (s) => (s.modes === 'bus' ? `${s.name} (stop ${s.id})` : s.
 app.get('/api/stations', handle(async (req, res) => {
     const { stations, mainStations } = await getStatic();
     const q = String(req.query.q ?? '').trim().toLowerCase();
-    if (!q) return res.json(mainStations.map((s) => ({ id: s.id, name: stationLabel(s), modes: s.modes })));
+    const out = (s) => ({ id: s.id, name: stationLabel(s), modes: s.modes, lat: s.lat, lng: s.lng });
+    if (!q) return res.json(mainStations.map(out));
     if (q.length < 2) return res.status(400).json({ error: 'Type at least 2 letters' });
     const matches = stations
         .map((s) => {
@@ -142,7 +156,7 @@ app.get('/api/stations', handle(async (req, res) => {
         .filter((m) => m.rank >= 0)
         .sort((a, b) => a.rank - b.rank || (a.s.modes === 'bus') - (b.s.modes === 'bus') || a.s.name.localeCompare(b.s.name))
         .slice(0, 20);
-    res.json(matches.map(({ s }) => ({ id: s.id, name: stationLabel(s), modes: s.modes })));
+    res.json(matches.map(({ s }) => out(s)));
 }));
 
 // Next departures from one station for the next 2 hours: timetable + live delays
@@ -247,7 +261,8 @@ app.get('/api/places', handle(async (req, res) => {
     if (q.length < 2) return res.status(400).json({ error: 'Type at least 2 letters' });
     const { routes } = await getStatic();
     if (!routePlaces) {
-        const names = new Map(routes.map((r) => [r.route_id, r.long_name.toLowerCase()]));
+        // Searchable as "Springfield", "526" or "bus 526"
+        const names = new Map(routes.map((r) => [r.route_id, `${r.long_name}|${r.short_name}|${r.mode} ${r.short_name}`.toLowerCase()]));
         routePlaces = (await db.getRoutePlaces()).map((r) => ({ id: r.route_id, to: `${r.headsigns}|${names.get(r.route_id) ?? ''}`, via: r.stops }));
     }
     const to = routePlaces.filter((r) => r.to.includes(q)).map((r) => r.id);
@@ -288,6 +303,8 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
     res.json({
         tripId,
         routeName: trip.long_name,
+        routeShort: trip.short_name,
+        mode: trip.mode,
         headsign: trip.headsign.replace(/ (station|ferry terminal)$/, ''),
         color: `#${trip.color}`,
         textColor: `#${trip.text_color}`,

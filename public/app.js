@@ -89,6 +89,9 @@ function showTab(name) {
     // The highlight slides to the chosen tab (position 0 to 3)
     document.querySelector('.tabs').style.setProperty('--tab', TABS.indexOf(name));
     if (name === 'stats') loadStats();
+    // The station pin belongs to the Departures tab
+    if (name === 'board') showStationOnMap(stations.find((x) => x.id === state.station), false);
+    else stationPin.clearLayers();
     saveUrl();
 }
 for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
@@ -272,6 +275,7 @@ function renderTrainList() {
     const going = state.place ? trains.filter((t) => placeMatch(t) === 'to').length : 0;
     $('filter-note').textContent = state.place
         ? `${going} ${noun(going)} going to ${state.place}, ${trains.length - going} passing through${state.mode !== 'bus' ? ' · buses are under Buses' : ''}`
+        : state.line?.startsWith('Bus ') ? `Showing ${trains.length} ${noun(trains.length)} on route ${state.line.slice(4)}`
         : state.line ? `Showing ${trains.length} ${state.line} ${noun(trains.length)}` : '';
 }
 $('train-list').addEventListener('click', (e) => {
@@ -379,13 +383,39 @@ async function selectTrain(tripId) {
     await loadJourney();
 }
 
+// The selected journey's stops drawn on the map, so a departure you tap shows where it goes
+const journeyLayer = L.layerGroup().addTo(map);
+let journeyFitted = null; // trip id the map was last fitted to, so 30-second refreshes don't move the map
+
+function drawJourney(j) {
+    journeyLayer.clearLayers();
+    const pts = j.stops.filter((s) => s.lat !== null);
+    if (pts.length < 2) return;
+    const line = pts.map((s) => [s.lat, s.lng]);
+    L.polyline(line, { color: '#fffaf3', weight: 8, opacity: 0.95, interactive: false }).addTo(journeyLayer);
+    L.polyline(line, { color: j.color, weight: 4, opacity: 1, interactive: false }).addTo(journeyLayer);
+    for (const s of pts) {
+        L.circleMarker([s.lat, s.lng], {
+            radius: s.state === 'next' ? 6 : 4, weight: 2, color: j.color,
+            fillColor: s.state === 'passed' ? j.color : '#fffaf3', fillOpacity: 1,
+        }).bindTooltip(`${escapeHtml(s.name)} · ${escapeHtml(s.expected ?? s.scheduled)}`).addTo(journeyLayer);
+    }
+    if (journeyFitted === j.tripId) return;
+    journeyFitted = j.tripId;
+    // A running vehicle: go to it. Otherwise show the whole journey.
+    const live = trainMarkers.size && lastTrains.find((t) => t.tripId === j.tripId);
+    if (live) map.flyTo([live.lat, live.lng], Math.max(map.getZoom(), 13), { duration: reduceMotion() ? 0 : 0.6 });
+    else map.flyToBounds(line, { padding: [40, 40], maxZoom: 14, duration: reduceMotion() ? 0 : 0.8 });
+}
+
 async function loadJourney() {
     if (!state.selected) return;
     const card = $('journey');
     try {
         const j = await getJson(`/api/trips/${encodeURIComponent(state.selected)}`);
+        drawJourney(j);
         const pill = $('journey-line');
-        pill.textContent = j.routeName;
+        pill.textContent = j.mode === 'bus' ? `Bus ${j.routeShort} · ${j.routeName}` : j.routeName;
         pill.style.background = j.color;
         pill.style.color = j.textColor;
         $('journey-title').textContent = `To ${j.headsign}`;
@@ -418,6 +448,8 @@ async function loadJourney() {
 
 function closeJourney() {
     state.selected = null;
+    journeyLayer.clearLayers();
+    journeyFitted = null;
     hideWithExit($('journey'), 180);
     delete $('journey').dataset.shown;
     drawTrains();
@@ -451,7 +483,7 @@ async function loadLive() {
     try {
         // Buses come from their own (much bigger) feed, only while the Buses view is on
         const mode = state.mode;
-        const [trains, summary] = await Promise.all([getJson(mode === 'bus' ? '/api/trains?mode=bus' : '/api/trains'), getJson(mode === 'bus' ? '/api/summary?mode=bus' : '/api/summary')]);
+        const [trains, summary] = await Promise.all([getJson(mode === 'bus' ? '/api/trains?mode=bus' : '/api/trains'), getJson(mode ? `/api/summary?mode=${mode}` : '/api/summary')]);
         if (mode !== state.mode) return; // switched view while this was loading
         lastTrains = trains.trains;
         drawTrains();
@@ -474,6 +506,8 @@ function renderSummary(s) {
         .filter(([, n]) => n > 0)
         .map(([mode, n]) => `<b>${n.toLocaleString('en-AU')}</b> ${MODE_NOUN[mode][n === 1 ? 0 : 1]}`);
     $('kpi-running').innerHTML = parts.join(' · ') || '<b>0</b> services';
+    // On All, the on-time share is for trains, trams and ferries (bus delays come only with the Buses view)
+    $('kpi-ontime-of').textContent = s.onTimeOf && s.byMode?.bus ? ` (${s.onTimeOf})` : '';
     const onTime = $('kpi-ontime');
     onTime.textContent = s.onTimePercent === null ? '–' : `${s.onTimePercent}%`;
     onTime.className = s.onTimePercent === null ? '' : s.onTimePercent >= 90 ? 'good' : s.onTimePercent >= 75 ? 'warn' : 'bad';
@@ -562,6 +596,7 @@ async function loadStations() {
     if (!stations.some((s) => s.id === state.station)) state.station = DEFAULT_STATION;
     $('station-list').innerHTML = stations.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
     $('station-input').value = stations.find((s) => s.id === state.station)?.name ?? '';
+    if (state.tab === 'board') showStationOnMap(stations.find((s) => s.id === state.station), true);
 }
 
 // Bus stops (12,000 of them) aren't in the list up front: as you type, matching stops are fetched and added
@@ -582,6 +617,17 @@ $('station-input').addEventListener('input', (e) => {
     }, 250);
 });
 
+// A pin for the station whose departures you're looking at
+const stationPin = L.layerGroup().addTo(map);
+function showStationOnMap(station, fly) {
+    stationPin.clearLayers();
+    if (!station || station.lat == null) return;
+    L.circleMarker([station.lat, station.lng], { radius: 9, weight: 3, color: '#2f6b5a', fillColor: '#fffaf3', fillOpacity: 1 })
+        .bindTooltip(escapeHtml(station.name), { permanent: true, direction: 'right', offset: [10, 0], className: 'station-label' })
+        .addTo(stationPin);
+    if (fly) map.flyTo([station.lat, station.lng], Math.max(map.getZoom(), 14), { duration: reduceMotion() ? 0 : 0.6 });
+}
+
 function pickStation(text) {
     const typed = text.trim().toLowerCase().replace(/ station$/, '');
     const match = stations.find((s) => s.name.toLowerCase() === typed)
@@ -596,6 +642,7 @@ function pickStation(text) {
     error.hidden = true;
     $('station-input').value = match.name;
     state.station = match.id;
+    showStationOnMap(match, true);
     delete $('board').dataset.staggered; // a new station's list settles in again
     saveUrl();
     loadBoard();
@@ -643,7 +690,7 @@ async function loadBoard() {
             return;
         }
         board.innerHTML = departures.map((d) => `
-            <li class="${d.status === 'cancelled' ? 'cancelled' : ''}">
+            <li class="${d.status === 'cancelled' ? 'cancelled' : ''}${d.tripId === state.selected ? ' selected' : ''}" data-trip="${escapeHtml(d.tripId)}" tabindex="0" role="button" aria-label="${escapeHtml(`${d.scheduled} ${d.routeShort ?? ''} to ${d.headsign}: show stops`)}">
               <span class="time">${d.expected ? `<small>${escapeHtml(d.scheduled)}</small>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</span>
               <span class="dest"><span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${d.mode && d.mode !== 'train' ? `<b class="route-no">${escapeHtml(d.routeShort)}</b> ` : ''}${escapeHtml(d.headsign)}</span>
                 ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${d.minutesAway} min` : ''}</span>` : ''}</span>
@@ -655,6 +702,36 @@ async function loadBoard() {
         console.error('Failed to load departures:', err);
     }
 }
+// Tap a departure (or its route number) to see every stop, on the card and on the map
+function openDeparture(e) {
+    const row = e.target.closest('li[data-trip]');
+    if (!row || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    for (const li of $('board').querySelectorAll('li.selected')) li.classList.remove('selected');
+    row.classList.add('selected');
+    selectTrain(row.dataset.trip);
+}
+$('board').addEventListener('click', openDeparture);
+$('board').addEventListener('keydown', openDeparture);
+
+// Quick times: Now, +30 min, +1 hr, +3 hr, tomorrow 7 am (Brisbane time)
+document.querySelector('.when-chips').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-when]');
+    if (!btn) return;
+    const v = btn.dataset.when;
+    if (v === '0') { setWhen(''); return; }
+    let target;
+    if (v === 'tomorrow') {
+        const d = new Date(Date.now() + 10 * 3600 * 1000 + 86400 * 1000);
+        target = `${d.toISOString().slice(0, 10)}T07:00`;
+    } else {
+        const base = state.at ? new Date(`${state.at}:00Z`).getTime() : Date.now() + 10 * 3600 * 1000;
+        target = new Date(base + Number(v) * 60000).toISOString().slice(0, 16);
+    }
+    $('when-input').value = target;
+    setWhen(target);
+});
+
 $('when-input').addEventListener('change', (e) => setWhen(e.target.value));
 $('when-now').addEventListener('click', () => setWhen(''));
 setupWhen();
@@ -789,11 +866,11 @@ async function loadStats() {
         console.error('Failed to load stats:', err);
     }
 }
-document.querySelector('.seg').addEventListener('click', (e) => {
+$('stats-seg').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-days]');
     if (!btn) return;
     statsDays = Number(btn.dataset.days);
-    for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(b === btn));
+    for (const b of document.querySelectorAll('#stats-seg button')) b.setAttribute('aria-pressed', String(b === btn));
     loadStats();
 });
 
@@ -819,6 +896,8 @@ function applyMode(mode) {
     }
     drawTrains();
     renderTrainList();
+    // The numbers at the top follow the view: "44 trains running", "10 trams running"…
+    getJson(mode ? `/api/summary?mode=${mode}` : '/api/summary').then((s) => { if (state.mode === mode) renderSummary(s); }).catch(() => {});
     // The G:link is on the Gold Coast, far from Brisbane: zoom the map to what is now showing
     const shown = lastTrains.filter(routeVisible).map((t) => [t.lat, t.lng]);
     if (mode && shown.length) map.flyToBounds(shown, { padding: [40, 40], maxZoom: 13, duration: reduceMotion() ? 0 : 0.8 });

@@ -64,7 +64,7 @@
             <!-- Trains: network numbers, line filter, list of trains -->
             <section id="view-trains" class="view" role="tabpanel" aria-labelledby="tab-trains">
                 <!-- One line of numbers instead of four boxes: the list below already shows which trains are late -->
-                <p class="summary"><span id="kpi-running">–</span> running · <b id="kpi-ontime">–</b> on time<span id="kpi-delay-wrap"> · late ones about <b id="kpi-delay">–</b></span></p>
+                <p class="summary"><span id="kpi-running">–</span> running · <b id="kpi-ontime">–</b> on time<span id="kpi-ontime-of"></span><span id="kpi-delay-wrap"> · late ones about <b id="kpi-delay">–</b></span></p>
                 <!-- Pick a kind of service; the line filter below narrows it further -->
                 <div class="seg" id="mode-seg" role="group" aria-label="Show">
                     <button type="button" data-mode="" aria-pressed="true">All</button>
@@ -96,13 +96,21 @@
                     <input id="when-input" class="station-input" type="datetime-local" step="300">
                     <button id="when-now" type="button" class="link-btn" hidden>Back to now</button>
                 </div>
+                <!-- One tap to look later, without opening the date picker -->
+                <div class="when-chips" role="group" aria-label="Quick times">
+                    <button type="button" data-when="0">Now</button>
+                    <button type="button" data-when="30">+30 min</button>
+                    <button type="button" data-when="60">+1 hr</button>
+                    <button type="button" data-when="180">+3 hr</button>
+                    <button type="button" data-when="tomorrow">Tomorrow 7 am</button>
+                </div>
                 <p id="when-note" class="filter-note" role="status"></p>
                 <ul id="board" class="board" aria-busy="true"><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li></ul>
             </section>
 
             <!-- On-time history, recorded every 10 minutes -->
             <section id="view-stats" class="view" role="tabpanel" aria-labelledby="tab-stats" hidden>
-                <div class="seg" role="group" aria-label="Period">
+                <div class="seg" id="stats-seg" role="group" aria-label="Period">
                     <button type="button" data-days="1">Today</button>
                     <button type="button" data-days="7" aria-pressed="true">7 days</button>
                     <button type="button" data-days="30">30 days</button>
