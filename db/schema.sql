@@ -1,4 +1,4 @@
--- Rail-only copy of TransLink's GTFS schedule (route_type = 2).
+-- TransLink's SEQ GTFS schedule: trains, buses, the G:link tram and ferries.
 -- Loaded by scripts/load-gtfs.js; safe to run more than once.
 
 CREATE TABLE IF NOT EXISTS routes (
@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS routes (
   text_color  TEXT NOT NULL
 );
 
--- train, tram (G:link) or ferry. Added after the first version, so older databases get it here.
+-- train, bus, tram (G:link) or ferry. Added after the first version, so older databases get it here.
 ALTER TABLE routes ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'train';
 
 -- Stations (GTFS location_type = 1), e.g. place_spcsta = Springfield Central
@@ -20,7 +20,12 @@ CREATE TABLE IF NOT EXISTS stations (
   lng         DOUBLE PRECISION NOT NULL
 );
 
--- Platforms (location_type = 0) belong to a station
+-- Which kinds of service stop here, comma-separated and sorted. Lets the station list stay short
+-- (trains, tram, ferries) while bus stops are found by searching.
+ALTER TABLE stations ADD COLUMN IF NOT EXISTS modes TEXT NOT NULL DEFAULT '';  -- e.g. 'train' or 'bus,train'
+
+-- Platforms (location_type = 0) belong to a station. A bus stop with no parent station is
+-- its own station (same id), so departures work the same way for every kind of stop.
 CREATE TABLE IF NOT EXISTS stops (
   stop_id     TEXT PRIMARY KEY,
   station_id  TEXT REFERENCES stations(station_id),
@@ -36,16 +41,37 @@ CREATE TABLE IF NOT EXISTS trips (
   direction_id SMALLINT
 );
 
--- Times are seconds after midnight of the service day; GTFS allows > 24:00:00
-CREATE TABLE IF NOT EXISTS stop_times (
-  trip_id        TEXT NOT NULL REFERENCES trips(trip_id) ON DELETE CASCADE,
-  stop_sequence  INT  NOT NULL,
-  stop_id        TEXT NOT NULL REFERENCES stops(stop_id),
-  arrival_secs   INT  NOT NULL,
-  departure_secs INT  NOT NULL,
-  PRIMARY KEY (trip_id, stop_sequence)
+-- Trip patterns. Most trips of a route stop at the same stops with the same gaps between them,
+-- and differ only in when they start. So instead of storing every stop time of every trip
+-- (3.6 million rows for SEQ, too big for Neon's free 0.5 GB), each distinct pattern is stored
+-- once and each trip stores which pattern it follows and when it starts (about 274,000 rows).
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pattern_id INT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS start_secs INT;   -- departure from its first stop
+CREATE INDEX IF NOT EXISTS trips_pattern_start_idx ON trips (pattern_id, start_secs);
+
+CREATE TABLE IF NOT EXISTS pattern_stops (
+  pattern_id    INT  NOT NULL,
+  stop_sequence INT  NOT NULL,
+  stop_id       TEXT NOT NULL REFERENCES stops(stop_id),
+  arr_offset    INT  NOT NULL,          -- seconds after the trip's start
+  dep_offset    INT  NOT NULL,
+  is_last       BOOLEAN NOT NULL,       -- the last stop is not a departure
+  PRIMARY KEY (pattern_id, stop_sequence)
 );
-CREATE INDEX IF NOT EXISTS stop_times_stop_dep_idx ON stop_times (stop_id, departure_secs);
+CREATE INDEX IF NOT EXISTS pattern_stops_stop_idx ON pattern_stops (stop_id);
+
+-- The old stop_times table is replaced by a view with the same columns,
+-- so code that reads one trip's stop times doesn't change.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'stop_times' AND relkind = 'r') THEN
+    DROP TABLE stop_times CASCADE;
+  END IF;
+END $$;
+CREATE OR REPLACE VIEW stop_times AS
+  SELECT t.trip_id, ps.stop_sequence, ps.stop_id,
+         t.start_secs + ps.arr_offset AS arrival_secs,
+         t.start_secs + ps.dep_offset AS departure_secs
+  FROM trips t JOIN pattern_stops ps ON ps.pattern_id = t.pattern_id;
 
 CREATE TABLE IF NOT EXISTS calendar (
   service_id TEXT PRIMARY KEY,

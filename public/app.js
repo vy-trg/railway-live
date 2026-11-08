@@ -59,7 +59,8 @@ async function getJson(url) {
 const params = new URLSearchParams(location.search);
 const state = {
     line: params.get('line') || '',
-    mode: ['train', 'tram', 'ferry'].includes(params.get('mode')) ? params.get('mode') : '', // '' = all
+    place: params.get('place') || '', // free-text place, e.g. 'Springfield'
+    mode: ['train', 'tram', 'ferry', 'bus'].includes(params.get('mode')) ? params.get('mode') : '', // '' = all
     station: params.get('station') || DEFAULT_STATION,
     tab: ['trains', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
     at: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(params.get('at') ?? '') ? params.get('at') : '', // planned time, '' = now
@@ -70,6 +71,7 @@ function saveUrl() {
     const p = new URLSearchParams();
     if (state.mode) p.set('mode', state.mode);
     if (state.line) p.set('line', state.line);
+    if (state.place) p.set('place', state.place);
     if (state.station !== DEFAULT_STATION) p.set('station', state.station);
     if (state.tab !== 'trains') p.set('tab', state.tab);
     if (state.at) p.set('at', state.at);
@@ -87,6 +89,9 @@ function showTab(name) {
     // The highlight slides to the chosen tab (position 0 to 3)
     document.querySelector('.tabs').style.setProperty('--tab', TABS.indexOf(name));
     if (name === 'stats') loadStats();
+    // The station pin belongs to the Departures tab
+    if (name === 'board') showStationOnMap(stations.find((x) => x.id === state.station), false);
+    else stationPin.clearLayers();
     saveUrl();
 }
 for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
@@ -94,7 +99,8 @@ for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
 // ---------- Map ----------
 // The map can't be dragged far from South East Queensland; at the edge it pulls back like a rubber band
 const SEQ_BOUNDS = L.latLngBounds([-28.6, 151.6], [-25.9, 154.0]);
-const map = L.map('map', { zoomControl: false, maxBounds: SEQ_BOUNDS, maxBoundsViscosity: 0.6, minZoom: 8 })
+// preferCanvas: a thousand bus dots draw on one canvas instead of a thousand SVG elements
+const map = L.map('map', { preferCanvas: true, zoomControl: false, maxBounds: SEQ_BOUNDS, maxBoundsViscosity: 0.6, minZoom: 8 })
     .setView([-27.5, 152.98], 10);
 L.control.zoom({ position: 'topleft' }).addTo(map);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -126,8 +132,20 @@ const trainMarkers = new Map();
 let lines = [];
 let lastTrains = [];
 
+// Routes found for the typed place: going there (to) or calling there on the way (via)
+let placeRoutes = null; // { to: Set, via: Set } or null
+
+function placeMatch(train) {
+    const q = state.place.toLowerCase();
+    if ((train.headsign ?? '').toLowerCase().includes(q)) return 'to';
+    if (placeRoutes?.to.has(train.routeId)) return 'to';
+    if (placeRoutes?.via.has(train.routeId)) return 'via';
+    return null;
+}
+
 function routeVisible(train) {
     if (state.mode && train.mode !== state.mode) return false;
+    if (state.place) return placeMatch(train) !== null;
     if (!state.line) return true;
     const line = lines.find((l) => l.name === state.line);
     return !line || line.routeIds.includes(train.routeId);
@@ -135,9 +153,11 @@ function routeVisible(train) {
 
 function markerStyle(t) {
     const selected = t.tripId === state.selected;
+    // Buses are smaller: there can be a thousand of them
+    const bus = t.mode === 'bus';
     return {
-        radius: selected ? 10 : 7,
-        weight: selected ? 4 : 3,
+        radius: selected ? 10 : bus ? 5 : 7,
+        weight: selected ? 4 : bus ? 2 : 3,
         color: '#fffaf3', // white ring keeps every dot readable on top of the coloured tracks
         fillColor: cssVar(LEVEL_VARS[t.level] ?? '--muted'),
         fillOpacity: 1,
@@ -161,7 +181,8 @@ function glide(marker, to) {
 
 // Trains are circles (as before). Trams are rounded squares and ferries diamonds, so the
 // kind of service is clear without relying on colour alone.
-const MODE_NOUN = { train: ['train', 'trains'], tram: ['tram', 'trams'], ferry: ['ferry', 'ferries'] };
+const MODE_NOUN = { train: ['train', 'trains'], tram: ['tram', 'trams'], ferry: ['ferry', 'ferries'], bus: ['bus', 'buses'] };
+const isCircle = (mode) => mode === 'train' || mode === 'bus';
 function shapeIcon(t) {
     const selected = t.tripId === state.selected;
     const size = selected ? 20 : 15;
@@ -184,11 +205,11 @@ function drawTrains() {
         const existing = trainMarkers.get(t.id);
         if (existing) {
             glide(existing, [t.lat, t.lng]);
-            if (t.mode === 'train') existing.setStyle(markerStyle(t));
+            if (isCircle(t.mode)) existing.setStyle(markerStyle(t));
             else existing.setIcon(shapeIcon(t));
             existing.setTooltipContent(escapeHtml(tip));
         } else {
-            const m = (t.mode === 'train'
+            const m = (isCircle(t.mode)
                 ? L.circleMarker([t.lat, t.lng], markerStyle(t))
                 : L.marker([t.lat, t.lng], { icon: shapeIcon(t), keyboard: false })).addTo(map)
                 .bindTooltip(escapeHtml(tip), { direction: 'top', offset: [0, -8] });
@@ -225,11 +246,15 @@ function renderTrainList() {
     $('train-list').removeAttribute('aria-busy');
     const list = $('train-list');
     const trains = lastTrains.filter(routeVisible)
-        // Late trains first: that's what someone checking the network wants to know
-        .sort((a, b) => (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || (b.delaySec ?? 0) - (a.delaySec ?? 0));
+        // Searching a place: services going there first, then ones passing through.
+        // Otherwise late trains first: that's what someone checking the network wants to know
+        .sort((a, b) => (state.place ? (placeMatch(a) === 'to' ? 0 : 1) - (placeMatch(b) === 'to' ? 0 : 1) : 0)
+            || (LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]) || (b.delaySec ?? 0) - (a.delaySec ?? 0));
     const noun = (n) => (state.mode ? MODE_NOUN[state.mode][n === 1 ? 0 : 1] : n === 1 ? 'service' : 'services');
     if (trains.length === 0) {
-        list.innerHTML = state.line
+        list.innerHTML = state.place
+            ? `<li class="empty">No ${noun(0)} going to or through “${escapeHtml(state.place)}” right now.${state.mode !== 'bus' ? ' Try Buses, or' : ''} <button type="button" class="link-btn" data-clear-line>show everything</button></li>`
+            : state.line
             ? `<li class="empty">No ${escapeHtml(state.line)} services are running right now. <button type="button" class="link-btn" data-clear-line>Show all lines</button></li>`
             : `<li class="empty">No ${noun(0)} are running right now. Services usually start again around 5am.</li>`;
         $('filter-note').textContent = '';
@@ -240,14 +265,18 @@ function renderTrainList() {
         <li><button class="train" type="button" data-trip="${escapeHtml(t.tripId)}" aria-pressed="${t.tripId === state.selected}" style="--c:${escapeHtml(t.color)}">
           <span class="bar"></span>
           <span class="to">To ${escapeHtml(t.headsign ?? 'unknown')}</span>
+          ${state.place && placeMatch(t) === 'via' ? `<span class="via">via ${escapeHtml(state.place)}</span>` : ''}
           ${statusHtml(t.level, t.delayText)}
-          <span class="meta">${t.mode !== 'train' ? `${t.mode === 'tram' ? 'G:link' : 'Ferry'} · ` : ''}${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
+          <span class="meta">${t.mode !== 'train' ? `${t.mode === 'tram' ? 'G:link' : t.mode === 'ferry' ? 'Ferry' : `Bus ${escapeHtml(t.routeShort ?? '')}`} · ` : ''}${t.nextStop ? `Next: ${escapeHtml(t.nextStop)}` : escapeHtml(t.routeName)}</span>
         </button></li>`).join('')
         + (hidden > 0 ? `<li><button class="more-btn" type="button" data-more>Show ${hidden} more ${noun(hidden)}</button></li>` : '');
     staggerOnce(list);
     // Say what the filter did, e.g. "Showing 6 Springfield trains"
-    $('filter-note').textContent = state.line
-        ? `Showing ${trains.length} ${state.line} ${noun(trains.length)}` : '';
+    const going = state.place ? trains.filter((t) => placeMatch(t) === 'to').length : 0;
+    $('filter-note').textContent = state.place
+        ? `${going} ${noun(going)} going to ${state.place}, ${trains.length - going} passing through${state.mode !== 'bus' ? ' · buses are under Buses' : ''}`
+        : state.line?.startsWith('Bus ') ? `Showing ${trains.length} ${noun(trains.length)} on route ${state.line.slice(4)}`
+        : state.line ? `Showing ${trains.length} ${state.line} ${noun(trains.length)}` : '';
 }
 $('train-list').addEventListener('click', (e) => {
     if (e.target.closest('[data-clear-line]')) {
@@ -354,13 +383,39 @@ async function selectTrain(tripId) {
     await loadJourney();
 }
 
+// The selected journey's stops drawn on the map, so a departure you tap shows where it goes
+const journeyLayer = L.layerGroup().addTo(map);
+let journeyFitted = null; // trip id the map was last fitted to, so 30-second refreshes don't move the map
+
+function drawJourney(j) {
+    journeyLayer.clearLayers();
+    const pts = j.stops.filter((s) => s.lat !== null);
+    if (pts.length < 2) return;
+    const line = pts.map((s) => [s.lat, s.lng]);
+    L.polyline(line, { color: '#fffaf3', weight: 8, opacity: 0.95, interactive: false }).addTo(journeyLayer);
+    L.polyline(line, { color: j.color, weight: 4, opacity: 1, interactive: false }).addTo(journeyLayer);
+    for (const s of pts) {
+        L.circleMarker([s.lat, s.lng], {
+            radius: s.state === 'next' ? 6 : 4, weight: 2, color: j.color,
+            fillColor: s.state === 'passed' ? j.color : '#fffaf3', fillOpacity: 1,
+        }).bindTooltip(`${escapeHtml(s.name)} · ${escapeHtml(s.expected ?? s.scheduled)}`).addTo(journeyLayer);
+    }
+    if (journeyFitted === j.tripId) return;
+    journeyFitted = j.tripId;
+    // A running vehicle: go to it. Otherwise show the whole journey.
+    const live = trainMarkers.size && lastTrains.find((t) => t.tripId === j.tripId);
+    if (live) map.flyTo([live.lat, live.lng], Math.max(map.getZoom(), 13), { duration: reduceMotion() ? 0 : 0.6 });
+    else map.flyToBounds(line, { padding: [40, 40], maxZoom: 14, duration: reduceMotion() ? 0 : 0.8 });
+}
+
 async function loadJourney() {
     if (!state.selected) return;
     const card = $('journey');
     try {
         const j = await getJson(`/api/trips/${encodeURIComponent(state.selected)}`);
+        drawJourney(j);
         const pill = $('journey-line');
-        pill.textContent = j.routeName;
+        pill.textContent = j.mode === 'bus' ? `Bus ${j.routeShort} · ${j.routeName}` : j.routeName;
         pill.style.background = j.color;
         pill.style.color = j.textColor;
         $('journey-title').textContent = `To ${j.headsign}`;
@@ -393,6 +448,8 @@ async function loadJourney() {
 
 function closeJourney() {
     state.selected = null;
+    journeyLayer.clearLayers();
+    journeyFitted = null;
     hideWithExit($('journey'), 180);
     delete $('journey').dataset.shown;
     drawTrains();
@@ -424,7 +481,10 @@ setInterval(renderFeedStatus, 5000);
 // ---------- Trains + numbers ----------
 async function loadLive() {
     try {
-        const [trains, summary] = await Promise.all([getJson('/api/trains'), getJson('/api/summary')]);
+        // Buses come from their own (much bigger) feed, only while the Buses view is on
+        const mode = state.mode;
+        const [trains, summary] = await Promise.all([getJson(mode === 'bus' ? '/api/trains?mode=bus' : '/api/trains'), getJson(mode ? `/api/summary?mode=${mode}` : '/api/summary')]);
+        if (mode !== state.mode) return; // switched view while this was loading
         lastTrains = trains.trains;
         drawTrains();
         renderTrainList();
@@ -444,8 +504,10 @@ function renderSummary(s) {
     // "45 trains · 1 tram · 12 ferries running"; a kind with none running is left out
     const parts = Object.entries(s.byMode ?? { train: s.running })
         .filter(([, n]) => n > 0)
-        .map(([mode, n]) => `<b>${n}</b> ${MODE_NOUN[mode][n === 1 ? 0 : 1]}`);
+        .map(([mode, n]) => `<b>${n.toLocaleString('en-AU')}</b> ${MODE_NOUN[mode][n === 1 ? 0 : 1]}`);
     $('kpi-running').innerHTML = parts.join(' · ') || '<b>0</b> services';
+    // On All, the on-time share is for trains, trams and ferries (bus delays come only with the Buses view)
+    $('kpi-ontime-of').textContent = s.onTimeOf && s.byMode?.bus ? ` (${s.onTimeOf})` : '';
     const onTime = $('kpi-ontime');
     onTime.textContent = s.onTimePercent === null ? '–' : `${s.onTimePercent}%`;
     onTime.className = s.onTimePercent === null ? '' : s.onTimePercent >= 90 ? 'good' : s.onTimePercent >= 75 ? 'warn' : 'bad';
@@ -456,17 +518,64 @@ function renderSummary(s) {
 // ---------- Line filter ----------
 async function loadLines() {
     lines = await getJson('/api/lines');
-    $('line-list').innerHTML = lines.map((l) => `<option value="${escapeHtml(l.name)}"></option>`).join('');
+    // The label says where a bus, ferry or tram goes, so typing "Springfield" also finds Bus 526
+    $('line-list').innerHTML = lines.map((l) => `<option value="${escapeHtml(l.name)}"${l.description ? ` label="${escapeHtml(l.description)}"` : ''}></option>`).join('');
     if (state.line && !lines.some((l) => l.name === state.line)) state.line = '';
     $('line-filter').value = state.line;
     $('line-clear').hidden = !state.line;
+    if (state.place) applyPlace(state.place);
+}
+
+// A bus route's line is drawn only while you filter to it (469 bus routes would cover the map)
+const busTrack = L.layerGroup().addTo(map);
+async function drawBusTrack(line) {
+    busTrack.clearLayers();
+    if (!line || line.mode !== 'bus') return;
+    try {
+        for (const routeId of line.routeIds) {
+            for (const s of await getJson(`/api/shapes?route=${encodeURIComponent(routeId)}`)) {
+                L.polyline(s.coords, { color: '#fffaf3', weight: 6, opacity: 0.9, interactive: false }).addTo(busTrack);
+                L.polyline(s.coords, { color: s.color, weight: 3, opacity: 0.9, interactive: false }).addTo(busTrack);
+            }
+        }
+        if (busTrack.getLayers().length) map.flyToBounds(L.featureGroup(busTrack.getLayers()).getBounds(), { padding: [30, 30], duration: reduceMotion() ? 0 : 0.8 });
+    } catch (err) {
+        console.error('Failed to load the bus route:', err);
+    }
 }
 
 function applyLine(name) {
-    const match = lines.find((l) => l.name.toLowerCase() === name.trim().toLowerCase());
+    const text = name.trim();
+    const match = lines.find((l) => l.name.toLowerCase() === text.toLowerCase());
+    // Not a line name: treat it as a place ("Springfield", "Garden City")
+    if (!match && text.length >= 2) { applyPlace(text); return; }
+    state.place = '';
+    placeRoutes = null;
     state.line = match ? match.name : '';
     $('line-filter').value = state.line;
     $('line-clear').hidden = !state.line;
+    drawBusTrack(match);
+    // Picking a bus line switches to the Buses view (and back to All for other lines)
+    if (match && (match.mode === 'bus') !== (state.mode === 'bus')) { applyMode(match.mode === 'bus' ? 'bus' : ''); return; }
+    saveUrl();
+    drawTrains();
+    renderTrainList();
+}
+async function applyPlace(text) {
+    state.line = '';
+    state.place = text;
+    busTrack.clearLayers();
+    $('line-filter').value = text;
+    $('line-clear').hidden = false;
+    try {
+        const found = await getJson(`/api/places?q=${encodeURIComponent(text)}`);
+        if (state.place !== text) return; // typed something else meanwhile
+        placeRoutes = { to: new Set(found.to), via: new Set(found.via) };
+    } catch (err) {
+        placeRoutes = null; // still filters by destination name
+        console.error('Place search failed:', err);
+    }
+    listLimit = LIST_STEP;
     saveUrl();
     drawTrains();
     renderTrainList();
@@ -478,9 +587,45 @@ $('line-clear').addEventListener('click', () => applyLine(''));
 let stations = [];
 async function loadStations() {
     stations = await getJson('/api/stations');
+    // A bus stop from the link (?station=5341) isn't in the short list: look it up
+    if (state.station && !stations.some((s) => s.id === state.station)) {
+        const found = await getJson(`/api/stations?q=${encodeURIComponent(state.station)}`).catch(() => []);
+        const exact = found.find((s) => s.id === state.station);
+        if (exact) stations.push(exact);
+    }
     if (!stations.some((s) => s.id === state.station)) state.station = DEFAULT_STATION;
     $('station-list').innerHTML = stations.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
     $('station-input').value = stations.find((s) => s.id === state.station)?.name ?? '';
+    if (state.tab === 'board') showStationOnMap(stations.find((s) => s.id === state.station), true);
+}
+
+// Bus stops (12,000 of them) aren't in the list up front: as you type, matching stops are fetched and added
+let stationSearch = null;
+$('station-input').addEventListener('input', (e) => {
+    clearTimeout(stationSearch);
+    const q = e.target.value.trim();
+    if (q.length < 2) return;
+    stationSearch = setTimeout(async () => {
+        try {
+            const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}`);
+            for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
+            $('station-list').innerHTML = found.concat(stations.filter((s) => !found.includes(s)).slice(0, 300))
+                .map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
+        } catch (err) {
+            console.error('Station search failed:', err);
+        }
+    }, 250);
+});
+
+// A pin for the station whose departures you're looking at
+const stationPin = L.layerGroup().addTo(map);
+function showStationOnMap(station, fly) {
+    stationPin.clearLayers();
+    if (!station || station.lat == null) return;
+    L.circleMarker([station.lat, station.lng], { radius: 9, weight: 3, color: '#2f6b5a', fillColor: '#fffaf3', fillOpacity: 1 })
+        .bindTooltip(escapeHtml(station.name), { permanent: true, direction: 'right', offset: [10, 0], className: 'station-label' })
+        .addTo(stationPin);
+    if (fly) map.flyTo([station.lat, station.lng], Math.max(map.getZoom(), 14), { duration: reduceMotion() ? 0 : 0.6 });
 }
 
 function pickStation(text) {
@@ -490,13 +635,14 @@ function pickStation(text) {
     const error = $('station-error');
     if (!match) {
         // Say what to do, don't blame the typing
-        error.textContent = `We couldn’t find a station called “${text.trim()}”. Pick one from the list as you type.`;
+        error.textContent = `We couldn’t find a station or stop called “${text.trim()}”. Pick one from the list as you type, or type a stop number.`;
         error.hidden = false;
         return;
     }
     error.hidden = true;
     $('station-input').value = match.name;
     state.station = match.id;
+    showStationOnMap(match, true);
     delete $('board').dataset.staggered; // a new station's list settles in again
     saveUrl();
     loadBoard();
@@ -544,9 +690,9 @@ async function loadBoard() {
             return;
         }
         board.innerHTML = departures.map((d) => `
-            <li class="${d.status === 'cancelled' ? 'cancelled' : ''}">
+            <li class="${d.status === 'cancelled' ? 'cancelled' : ''}${d.tripId === state.selected ? ' selected' : ''}" data-trip="${escapeHtml(d.tripId)}" tabindex="0" role="button" aria-label="${escapeHtml(`${d.scheduled} ${d.routeShort ?? ''} to ${d.headsign}: show stops`)}">
               <span class="time">${d.expected ? `<small>${escapeHtml(d.scheduled)}</small>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</span>
-              <span class="dest"><span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${escapeHtml(d.headsign)}</span>
+              <span class="dest"><span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${d.mode && d.mode !== 'train' ? `<b class="route-no">${escapeHtml(d.routeShort)}</b> ` : ''}${escapeHtml(d.headsign)}</span>
                 ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${d.minutesAway} min` : ''}</span>` : ''}</span>
               <span class="right">${statusHtml(d.status, d.statusText)}${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
             </li>`).join('');
@@ -556,6 +702,36 @@ async function loadBoard() {
         console.error('Failed to load departures:', err);
     }
 }
+// Tap a departure (or its route number) to see every stop, on the card and on the map
+function openDeparture(e) {
+    const row = e.target.closest('li[data-trip]');
+    if (!row || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    for (const li of $('board').querySelectorAll('li.selected')) li.classList.remove('selected');
+    row.classList.add('selected');
+    selectTrain(row.dataset.trip);
+}
+$('board').addEventListener('click', openDeparture);
+$('board').addEventListener('keydown', openDeparture);
+
+// Quick times: Now, +30 min, +1 hr, +3 hr, tomorrow 7 am (Brisbane time)
+document.querySelector('.when-chips').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-when]');
+    if (!btn) return;
+    const v = btn.dataset.when;
+    if (v === '0') { setWhen(''); return; }
+    let target;
+    if (v === 'tomorrow') {
+        const d = new Date(Date.now() + 10 * 3600 * 1000 + 86400 * 1000);
+        target = `${d.toISOString().slice(0, 10)}T07:00`;
+    } else {
+        const base = state.at ? new Date(`${state.at}:00Z`).getTime() : Date.now() + 10 * 3600 * 1000;
+        target = new Date(base + Number(v) * 60000).toISOString().slice(0, 16);
+    }
+    $('when-input').value = target;
+    setWhen(target);
+});
+
 $('when-input').addEventListener('change', (e) => setWhen(e.target.value));
 $('when-now').addEventListener('click', () => setWhen(''));
 setupWhen();
@@ -690,25 +866,38 @@ async function loadStats() {
         console.error('Failed to load stats:', err);
     }
 }
-document.querySelector('.seg').addEventListener('click', (e) => {
+$('stats-seg').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-days]');
     if (!btn) return;
     statsDays = Number(btn.dataset.days);
-    for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(b === btn));
+    for (const b of document.querySelectorAll('#stats-seg button')) b.setAttribute('aria-pressed', String(b === btn));
     loadStats();
 });
 
 // ---------- Kind of service: All / Trains / Tram / Ferries ----------
 function applyMode(mode) {
+    const busChanged = (mode === 'bus') !== (state.mode === 'bus');
     state.mode = mode;
     for (const b of document.querySelectorAll('#mode-seg button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
     // A line from another kind of service would hide everything, so drop it
     const line = lines.find((l) => l.name === state.line);
-    if (mode && line && line.mode !== mode) applyLine('');
+    // e.g. the Springfield train line, then Buses: keep looking for Springfield, as a place
+    if (mode && line && line.mode !== mode) { state.line = ''; applyPlace(line.name); }
+    if (mode !== 'bus') busTrack.clearLayers();
     listLimit = LIST_STEP;
     saveUrl();
+    if (busChanged) {
+        // Buses are a different feed: show the list loading, then fetch
+        lastTrains = [];
+        drawTrains();
+        $('train-list').innerHTML = '<li class="skeleton-row"></li><li class="skeleton-row"></li><li class="skeleton-row"></li>';
+        loadLive();
+        return;
+    }
     drawTrains();
     renderTrainList();
+    // The numbers at the top follow the view: "44 trains running", "10 trams running"…
+    getJson(mode ? `/api/summary?mode=${mode}` : '/api/summary').then((s) => { if (state.mode === mode) renderSummary(s); }).catch(() => {});
     // The G:link is on the Gold Coast, far from Brisbane: zoom the map to what is now showing
     const shown = lastTrains.filter(routeVisible).map((t) => [t.lat, t.lng]);
     if (mode && shown.length) map.flyToBounds(shown, { padding: [40, 40], maxZoom: 13, duration: reduceMotion() ? 0 : 0.8 });

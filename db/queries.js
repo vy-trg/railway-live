@@ -15,12 +15,12 @@ export async function getRoutes() {
 }
 
 export async function getStopIds() {
-  const { rows } = await pool.query('SELECT stop_id FROM stops');
-  return rows.map((r) => r.stop_id);
+  const { rows } = await pool.query('SELECT stop_id, station_id FROM stops');
+  return rows;
 }
 
 export async function getStations() {
-  const { rows } = await pool.query('SELECT station_id AS id, name, lat, lng FROM stations ORDER BY name');
+  const { rows } = await pool.query('SELECT station_id AS id, name, lat, lng, modes FROM stations ORDER BY name');
   return rows;
 }
 
@@ -52,20 +52,38 @@ export async function getStopNames(stopIds) {
 // on `date` (Brisbane). Trips that started the day before and run past midnight
 // (GTFS times like 24:30:00) are included too. The last stop of a trip is not a departure.
 export async function getDepartures(stationId, date, fromSecs, toSecs, limit = 12) {
+  // Start from the station's stops, find the patterns that call there, then the trips of those
+  // patterns whose start time puts them at this stop inside the window (index on pattern_id, start_secs)
   const { rows } = await pool.query(
     `WITH days AS (SELECT $2::date AS day, 0 AS shift UNION ALL SELECT $2::date - 1, 86400)
-     SELECT st.trip_id, st.stop_id, st.stop_sequence, st.departure_secs - days.shift AS secs,
-            s.platform, t.headsign, r.route_id, r.long_name, r.color, r.text_color
-     FROM days
-     JOIN stop_times st ON st.departure_secs BETWEEN $3 + days.shift AND $4 + days.shift
-     JOIN stops s ON s.stop_id = st.stop_id AND s.station_id = $1
-     JOIN trips t ON t.trip_id = st.trip_id
+     SELECT t.trip_id, ps.stop_id, ps.stop_sequence, t.start_secs + ps.dep_offset - days.shift AS secs,
+            s.platform, t.headsign, r.route_id, r.long_name, r.short_name, r.mode, r.color, r.text_color
+     FROM stops s
+     JOIN pattern_stops ps ON ps.stop_id = s.stop_id AND NOT ps.is_last
+     CROSS JOIN days
+     JOIN trips t ON t.pattern_id = ps.pattern_id
+                 AND t.start_secs BETWEEN $3 + days.shift - ps.dep_offset AND $4 + days.shift - ps.dep_offset
      JOIN routes r ON r.route_id = t.route_id
-     WHERE ${RUNS_ON('t.service_id', 'days.day')}
-       AND EXISTS (SELECT 1 FROM stop_times nxt WHERE nxt.trip_id = st.trip_id AND nxt.stop_sequence > st.stop_sequence)
+     WHERE s.station_id = $1
+       AND ${RUNS_ON('t.service_id', 'days.day')}
      ORDER BY secs
      LIMIT $5`,
     [stationId, date, fromSecs, toSecs, limit]
+  );
+  return rows;
+}
+
+// Every place each route goes to or through: its name, its destinations and every station or stop
+// it calls at. Used to find routes by place ("Springfield") instead of by number.
+export async function getRoutePlaces() {
+  const { rows } = await pool.query(
+    `SELECT t.route_id, string_agg(DISTINCT lower(COALESCE(sta.name, s.name)), '|') AS stops,
+            string_agg(DISTINCT lower(t.headsign), '|') AS headsigns
+     FROM trips t
+     JOIN pattern_stops ps ON ps.pattern_id = t.pattern_id
+     JOIN stops s ON s.stop_id = ps.stop_id
+     LEFT JOIN stations sta ON sta.station_id = s.station_id
+     GROUP BY t.route_id`
   );
   return rows;
 }
@@ -81,7 +99,7 @@ export async function getRouteShapes() {
 export async function getTripStops(tripId) {
   const { rows } = await pool.query(
     `SELECT st.stop_sequence, st.stop_id, st.arrival_secs, st.departure_secs,
-            COALESCE(sta.name, s.name) AS name, s.platform
+            COALESCE(sta.name, s.name) AS name, s.platform, sta.lat, sta.lng
      FROM stop_times st
      JOIN stops s ON s.stop_id = st.stop_id
      LEFT JOIN stations sta ON sta.station_id = s.station_id
@@ -101,7 +119,8 @@ export async function recordDelays(serviceDate, items) {
      SELECT $1::date, d.trip_id, t.route_id, t.headsign, COALESCE(sta.name, s.name), first.departure_secs, d.delay, d.delay, d.cancelled
      FROM unnest($2::text[], $3::int[], $4::bool[]) AS d(trip_id, delay, cancelled)
      JOIN trips t ON t.trip_id = d.trip_id
-     JOIN LATERAL (SELECT stop_id, departure_secs FROM stop_times WHERE trip_id = d.trip_id ORDER BY stop_sequence LIMIT 1) first ON true
+     JOIN LATERAL (SELECT ps.stop_id, t.start_secs AS departure_secs FROM pattern_stops ps
+                   WHERE ps.pattern_id = t.pattern_id ORDER BY ps.stop_sequence LIMIT 1) first ON true
      JOIN stops s ON s.stop_id = first.stop_id
      LEFT JOIN stations sta ON sta.station_id = s.station_id
      ON CONFLICT (service_date, trip_id) DO UPDATE SET

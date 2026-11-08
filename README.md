@@ -1,7 +1,7 @@
 # Railway Live 🚆
 ![CI](https://github.com/vy-trg/railway-live/actions/workflows/ci.yml/badge.svg)
 
-Live trains, trams and ferries for South East Queensland: where every service is, how late it is, the next departures from any station, current track closures, and which services are most often late. An Express server joins TransLink's realtime feeds with the timetable in PostgreSQL and serves clean JSON to a Leaflet map.
+Live trains, buses, trams and ferries for South East Queensland: where every service is, how late it is, the next departures from any station or bus stop, current track closures, and which services are most often late. An Express server joins TransLink's realtime feeds with the timetable in PostgreSQL and serves clean JSON to a Leaflet map.
 
 📁 **[GitHub Repo](https://github.com/vy-trg/railway-live)**
 
@@ -31,7 +31,8 @@ Railway Live puts a thin server in between: it fetches and decodes the feed **at
 
 ## Features
 
-- **Trains, the G:link tram and Brisbane ferries:** one map and list for all three, with an All / Trains / Tram / Ferries switch. Trains are circles, trams squares, ferries diamonds, so the kind of service doesn't depend on colour alone. Buses are left out on purpose (thousands of vehicles: a project of its own).
+- **Every TransLink SEQ service:** all 469 bus routes, 66 train routes, the G:link and 9 ferry routes, with an All / Trains / Tram / Ferries / Buses switch. Trains and buses are circles, trams squares, ferries diamonds, so the kind of service doesn't depend on colour alone. Buses have their own view (over a thousand at peak would bury the trains); pick a bus line to see its route on the map.
+- **Any stop:** departures from 12,000+ bus stops as well as stations; type a stop name or its number (e.g. 5341).
 - **Live map:** every train on track lines drawn in each route's TransLink colour (from GTFS `shapes.txt`, simplified with Douglas–Peucker), refreshed every 30 seconds. The dot shows how late it is: green on time, amber 2–5 min, red 5+.
 - **Journey card:** pick a train to see every stop with scheduled and expected times; passed stops are crossed out and folded away, skipped stops are marked.
 - **Next trains** from any station (Springfield Central by default): scheduled time, expected time when late, platform and status, including cancelled and skipped stops, and where each train is now ("At Richlands · 2 stops away · 6 min").
@@ -99,7 +100,7 @@ cd railway-live
 npm install
 ```
 
-Load the train, tram and ferry timetable (about 323,000 stop times, ~72 MB in Postgres, 20-30 seconds):
+Load the full SEQ timetable (3.6 million stop times stored as about 274,000 trip-pattern rows, ~64 MB in Postgres, about 30 seconds):
 
 ```bash
 curl -o SEQ_GTFS.zip https://gtfsrt.api.translink.com.au/GTFS/SEQ_GTFS.zip
@@ -198,3 +199,13 @@ compose.yaml       Runs the app in Docker locally
 
 Train data: [TransLink GTFS-RT](https://translink.com.au/about-translink/open-data), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 Map tiles: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
+
+## What is and isn't included
+
+Everything in TransLink's SEQ timetable is loaded: every route_type in `SEQ_GTFS.zip` (bus, train, tram, ferry), every trip and every stop where passengers can get on or off. The exceptions, on purpose:
+
+- **Stops nobody can board at** (marked "no pick-up and no drop-off" in the timetable: G:link turnbacks and driver relief points, some bus depot stops; 5,306 stop times) are left out, so they never show as "Next". No trip is lost: every trip still has its stops.
+- **Outside South East Queensland** (Cairns, Townsville, Toowoomba…) isn't loaded. Only Cairns has realtime data, and only for buses.
+- **Services without realtime data** (some school and special services) are in the timetable and departures, but have no dot on the map and no live delay.
+- **Alerts and on-time stats** cover trains, the tram and ferries. Bus stop closures (dozens at any time) and 469 bus lines would bury them; bus delays are still recorded for the train + bus connection feature.
+
