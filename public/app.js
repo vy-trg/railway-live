@@ -69,6 +69,14 @@ const state = {
 let statsDays = 1; // period on the Stats tab: today first
 // "1 min", "4 mins"
 const mins = (n) => `${n} min${n === 1 ? '' : 's'}`;
+// Journey length: "45 mins", "1 hr", "1 hr 40 mins", "2 hrs 5 mins"
+function duration(total) {
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    if (h === 0) return mins(m);
+    const hours = `${h} hr${h === 1 ? '' : 's'}`;
+    return m === 0 ? hours : `${hours} ${mins(m)}`;
+}
 function saveUrl() {
     const p = new URLSearchParams();
     if (state.mode) p.set('mode', state.mode);
@@ -992,10 +1000,10 @@ function renderJourneys(res) {
         }).join('<span class="sep" aria-hidden="true">›</span>');
         const tag = i === best && plan.journeys.length > 1 ? '<span class="best-tag">Best right now</span>' : '';
         return `<li class="trip-card${i === best ? ' best' : ''}" data-i="${i}" aria-expanded="false">
-          <button type="button" aria-label="${escapeHtml(`Leave ${j.leave}, arrive ${j.arriveExpected ?? j.arrive}, ${j.minutes} minutes, ${j.changes} changes. Show details`)}">
+          <button type="button" aria-label="${escapeHtml(`Leave ${j.leave}, arrive ${j.arriveExpected ?? j.arrive}, ${duration(j.minutes)}, ${j.changes} changes. Show details`)}">
             ${tag}
             <span class="trip-head"><span class="times">${escapeHtml(j.leave)} → ${j.arriveExpected ? `<s>${escapeHtml(j.arrive)}</s> ${escapeHtml(j.arriveExpected)}` : escapeHtml(j.arrive)}</span>
-              <span class="meta">${mins(j.minutes)} · ${j.changes === 0 ? 'direct' : `${j.changes} change${j.changes > 1 ? 's' : ''}`}</span></span>
+              <span class="meta">${duration(j.minutes)} · ${j.changes === 0 ? 'direct' : `${j.changes} change${j.changes > 1 ? 's' : ''}`}</span></span>
             <span class="trip-chain">${chain}</span>
             <span class="trip-status">${journeyStatus(j, isNow, best, i)}</span>
           </button>
