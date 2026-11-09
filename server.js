@@ -7,6 +7,7 @@ import { enrichTrains, nextStop, summarize, buildBoard, railAlerts, buildTripPro
 import { brisbaneClock, parseLocalTime, formatClock } from './schedule.js';
 import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
+import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX } from './landmarks.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
@@ -62,6 +63,7 @@ async function getStatic() {
             mainRouteIds: new Set(routes.filter((r) => r.mode !== 'bus').map((r) => r.route_id)),
             mainLines: lines.filter((l) => l.mode !== 'bus'),
         };
+        staticData.landmarks = resolveLandmarks(new Map(stations.map((s) => [s.id, s])));
         staticData.mainStationIds = new Set(staticData.mainStations.map((s) => s.id));
         staticData.mainStopIds = new Set(allStops.filter((s) => staticData.mainStationIds.has(s.station_id)).map((s) => s.stop_id));
     }
@@ -144,8 +146,12 @@ app.get('/api/lines', handle(async (req, res) => {
 // Bus stops show their stop number (printed on the sign); busway stations (ids like place_grunbs) say busway
 const stationLabel = (s) => (s.modes === 'bus' ? `${s.name} (${s.id.startsWith('place_') ? 'busway' : `stop ${s.id}`})` : s.name.replace(/ station$/, ''));
 app.get('/api/stations', handle(async (req, res) => {
-    const { stations, mainStations } = await getStatic();
+    const { stations, mainStations, landmarks } = await getStatic();
     const q = String(req.query.q ?? '').trim().toLowerCase();
+    // ?places=1 (the Plan tab): campuses and airports come first, like a map search
+    const places = req.query.places === '1' && q.length >= 2
+        ? matchLandmarks(landmarks, q).map(({ id, name, modes, lat, lng }) => ({ id, name, modes, lat, lng }))
+        : [];
     const out = (s) => ({ id: s.id, name: stationLabel(s), modes: s.modes, lat: s.lat, lng: s.lng });
     if (!q) return res.json(mainStations.map(out));
     if (q.length < 2) return res.status(400).json({ error: 'Type at least 2 letters' });
@@ -158,13 +164,12 @@ app.get('/api/stations', handle(async (req, res) => {
         .filter((m) => m.rank >= 0)
         .sort((a, b) => a.rank - b.rank || (a.s.modes === 'bus') - (b.s.modes === 'bus') || a.s.name.localeCompare(b.s.name))
         .slice(0, 20);
-    res.json(matches.map(({ s }) => out(s)));
+    res.json([...places, ...matches.slice(0, 20 - places.length).map(({ s }) => out(s))]);
 }));
 
-// Next departures from one station for the next 2 hours: timetable + live delays
 // Journey planner: from a station or stop (or a position, "near me") to another, leaving at a time.
 // ?from=place_spcsta or ?fromLat=-27.6&fromLng=152.9, the same for to, and optional ?at=2026-11-10T07:30
-const placeFrom = (q, prefix, stationIds) => {
+const placeFrom = (q, prefix, stationIds, landmarks) => {
     const lat = Number(q[`${prefix}Lat`]);
     const lng = Number(q[`${prefix}Lng`]);
     if (q[`${prefix}Lat`] !== undefined) {
@@ -173,16 +178,20 @@ const placeFrom = (q, prefix, stationIds) => {
         return { lat, lng };
     }
     const id = String(q[prefix] ?? '');
+    if (id.startsWith(LANDMARK_PREFIX)) {
+        const l = landmarks.find((x) => x.id === id);
+        return l ? { lat: l.lat, lng: l.lng, landmark: l.id } : null;
+    }
     return stationIds.has(id) ? { stationId: id } : null;
 };
 
 app.get('/api/plan', handle(async (req, res) => {
-    const { stationIds } = await getStatic();
-    const from = placeFrom(req.query, 'from', stationIds);
-    const to = placeFrom(req.query, 'to', stationIds);
+    const { stationIds, landmarks } = await getStatic();
+    const from = placeFrom(req.query, 'from', stationIds, landmarks);
+    const to = placeFrom(req.query, 'to', stationIds, landmarks);
     if (!from) return res.status(400).json({ error: 'Pick where you are leaving from' });
     if (!to) return res.status(400).json({ error: 'Pick where you are going' });
-    if (from.stationId && from.stationId === to.stationId) return res.status(400).json({ error: 'From and to are the same place' });
+    if ((from.stationId && from.stationId === to.stationId) || (from.landmark && from.landmark === to.landmark)) return res.status(400).json({ error: 'From and to are the same place' });
 
     const now = await nowSec();
     let date;
@@ -190,15 +199,25 @@ app.get('/api/plan', handle(async (req, res) => {
     if (req.query.at !== undefined) {
         const at = parseLocalTime(String(req.query.at));
         if (!at) return res.status(400).json({ error: 'Pick a date and time' });
-        if (at.epoch < now - 3600 || at.epoch > now + 7 * 86400) {
-            return res.status(400).json({ error: 'Pick a time between now and 7 days ahead' });
+        if (at.epoch < now - 300 || at.epoch > now + 7 * 86400) {
+            return res.status(400).json({ error: 'That time has passed. Pick a time from now to 7 days ahead.' });
         }
         ({ date, secs } = at);
     } else {
         ({ date, secs } = brisbaneClock(now));
     }
 
-    const result = await plan(from, to, date, secs);
+    let result = await plan(from, to, date, secs);
+    // Nothing more tonight: show the first journeys tomorrow morning instead of nothing
+    let nextDay = false;
+    if (!result.error && result.journeys.length === 0) {
+        const d = new Date(`${date}T00:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + 1);
+        date = d.toISOString().slice(0, 10);
+        secs = 3 * 3600;
+        result = await plan(from, to, date, secs);
+        nextDay = true;
+    }
     if (result.error === 'from') return res.json({ journeys: [], note: 'No stop within 800 m of where you are' });
     if (result.error === 'to') return res.json({ journeys: [], note: 'No stop within 800 m of where you are going' });
 
@@ -215,10 +234,11 @@ app.get('/api/plan', handle(async (req, res) => {
     res.json({
         date,
         at: formatClock(secs),
+        nextDay,
         planned: req.query.at !== undefined,
         stale: Boolean(main?.stale || bus?.stale),
         journeys: result.journeys.map((j) => describeJourney(j, result.stops, result.patterns, trips, updates)),
-        note: result.journeys.length === 0 ? 'No journey found in the next few hours' : null,
+        note: result.journeys.length === 0 ? 'No journey found, today or tomorrow morning. These two places may not be connected by public transport.' : null,
     });
 }));
 

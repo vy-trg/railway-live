@@ -41,6 +41,16 @@ To give several options, the planner runs again leaving a minute after the first
 | Changes | up to 4 (5 vehicles) | More is rarely useful |
 | Make it / Tight / Miss | `connection.js`: 3+ min spare / 0–3 / less | Same rule as the train + bus feature |
 
+## Places by name
+
+Typing "griffith" shows every Griffith campus first (Nathan, Mt Gravatt, Gold Coast, Logan, South Bank), like a map search. Also UQ St Lucia, QUT Gardens Point and Kelvin Grove, and both Brisbane Airport terminals. Each place is anchored on a real stop in `landmarks.js`, and the planner uses every stop within 800 m of it. It's a short hand-picked list, not an address search.
+
+## Choosing a time
+
+The browser's own date picker has no "Done" button and lets you pick a time that has already passed, which made the planner quietly use *now* instead. The Plan and Departures tabs now use their own picker: day, hour, minutes, am/pm, then **Done**. A time that has passed is refused with a message. Done runs the search straight away.
+
+If nothing runs any more that day, the planner shows the first journeys the next morning and says so.
+
 ## What it doesn't do (on purpose, for now)
 
 - **Addresses.** From and To are stations or stops; there is no address search, because that needs an outside geocoding service and an API key. "Near me" uses the phone's location instead, once, and doesn't save it.

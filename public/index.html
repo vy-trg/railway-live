@@ -90,7 +90,7 @@
                     <div class="plan-place">
                         <label class="field-label" for="plan-from">From</label>
                         <div class="plan-row">
-                            <input id="plan-from" class="station-input" list="plan-from-list" autocomplete="off" placeholder="Station or stop, e.g. Springfield Central">
+                            <input id="plan-from" class="station-input" list="plan-from-list" autocomplete="off" placeholder="Station, stop or place, e.g. Springfield Central">
                             <button id="plan-near" type="button" class="chip-btn" aria-describedby="plan-near-hint">Near me</button>
                         </div>
                         <datalist id="plan-from-list"></datalist>
@@ -99,12 +99,34 @@
                     <button id="plan-swap" type="button" class="icon-btn plan-swap" aria-label="Swap from and to">⇅</button>
                     <div class="plan-place">
                         <label class="field-label" for="plan-to">To</label>
-                        <input id="plan-to" class="station-input" list="plan-to-list" autocomplete="off" placeholder="Station or stop, e.g. Griffith University">
+                        <input id="plan-to" class="station-input" list="plan-to-list" autocomplete="off" placeholder="Station, stop or place, e.g. Griffith University">
                         <datalist id="plan-to-list"></datalist>
                     </div>
                     <div class="when">
-                        <label class="field-label" for="plan-when">Leaving</label>
-                        <input id="plan-when" class="station-input" type="datetime-local" step="300">
+                        <span class="field-label" id="plan-pick-label">Leaving</span>
+                        <div class="when-pick" id="plan-pick">
+                            <button type="button" class="when-btn" aria-expanded="false" aria-controls="plan-pick-panel" aria-describedby="plan-pick-label"><span class="when-text">Now</span><span aria-hidden="true">▾</span></button>
+                            <input type="hidden" id="plan-when">
+                            <div class="when-panel" id="plan-pick-panel" role="group" aria-label="Choose a day and time" hidden>
+                                <label class="field-label" for="plan-pick-day">Day</label>
+                                <select id="plan-pick-day" class="w-day station-input"></select>
+                                <span class="field-label">Time</span>
+                                <div class="w-time">
+                                    <select class="w-hour station-input" aria-label="Hour"></select>
+                                    <span aria-hidden="true">:</span>
+                                    <select class="w-min station-input" aria-label="Minutes"></select>
+                                    <div class="seg w-ampm" role="group" aria-label="am or pm">
+                                        <button type="button" data-ampm="am" aria-pressed="true">am</button>
+                                        <button type="button" data-ampm="pm" aria-pressed="false">pm</button>
+                                    </div>
+                                </div>
+                                <p class="field-error w-err" role="alert" hidden></p>
+                                <div class="when-actions">
+                                    <button type="button" class="link-btn w-cancel">Cancel</button>
+                                    <button type="button" class="primary-btn w-done">Done</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="when-chips" id="plan-chips" role="group" aria-label="Quick times">
                         <button type="button" data-when="0">Now</button>
@@ -128,8 +150,30 @@
                 <p id="station-error" class="field-error" role="alert" hidden></p>
                 <!-- Now, or plan ahead: any time in the next 7 days -->
                 <div class="when">
-                    <label class="field-label" for="when-input">Leaving</label>
-                    <input id="when-input" class="station-input" type="datetime-local" step="300">
+                    <span class="field-label" id="board-pick-label">Leaving</span>
+                    <div class="when-pick" id="board-pick">
+                        <button type="button" class="when-btn" aria-expanded="false" aria-controls="board-pick-panel" aria-describedby="board-pick-label"><span class="when-text">Now</span><span aria-hidden="true">▾</span></button>
+                        <input type="hidden" id="when-input">
+                        <div class="when-panel" id="board-pick-panel" role="group" aria-label="Choose a day and time" hidden>
+                            <label class="field-label" for="board-pick-day">Day</label>
+                            <select id="board-pick-day" class="w-day station-input"></select>
+                            <span class="field-label">Time</span>
+                            <div class="w-time">
+                                <select class="w-hour station-input" aria-label="Hour"></select>
+                                <span aria-hidden="true">:</span>
+                                <select class="w-min station-input" aria-label="Minutes"></select>
+                                <div class="seg w-ampm" role="group" aria-label="am or pm">
+                                    <button type="button" data-ampm="am" aria-pressed="true">am</button>
+                                    <button type="button" data-ampm="pm" aria-pressed="false">pm</button>
+                                </div>
+                            </div>
+                            <p class="field-error w-err" role="alert" hidden></p>
+                            <div class="when-actions">
+                                <button type="button" class="link-btn w-cancel">Cancel</button>
+                                <button type="button" class="primary-btn w-done">Done</button>
+                            </div>
+                        </div>
+                    </div>
                     <button id="when-now" type="button" class="link-btn" hidden>Back to now</button>
                 </div>
                 <!-- One tap to look later, without opening the date picker -->

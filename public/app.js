@@ -610,7 +610,7 @@ $('station-input').addEventListener('input', (e) => {
     if (q.length < 2) return;
     stationSearch = setTimeout(async () => {
         try {
-            const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}`);
+            const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}&places=1`);
             for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
             $('station-list').innerHTML = found.concat(stations.filter((s) => !found.includes(s)).slice(0, 300))
                 .map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
@@ -651,6 +651,94 @@ function pickStation(text) {
     loadBoard();
 }
 
+// ---------- Day and time picker with a Done button ----------
+// The hidden input keeps "YYYY-MM-DDTHH:MM" in Brisbane time, or "" for now.
+// Done checks the time hasn't passed, saves it, closes, and calls onDone.
+const pad2 = (n) => String(n).padStart(2, '0');
+function brisbaneDateAfter(days) {
+    return new Date(Date.now() + 10 * 3600 * 1000 + days * 86400 * 1000).toISOString().slice(0, 10);
+}
+function describeAt(value) {
+    if (!value) return 'Now';
+    const [date, time] = value.split('T');
+    const [h, m] = time.split(':').map(Number);
+    const clock = `${h % 12 === 0 ? 12 : h % 12}:${pad2(m)} ${h < 12 ? 'am' : 'pm'}`;
+    if (date === brisbaneDateAfter(0)) return `Today, ${clock}`;
+    if (date === brisbaneDateAfter(1)) return `Tomorrow, ${clock}`;
+    const d = new Date(`${date}T00:00:00Z`);
+    return `${d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}, ${clock}`;
+}
+
+const whenPickers = [];
+function whenPicker(rootId, onDone) {
+    const root = $(rootId);
+    const btn = root.querySelector('.when-btn');
+    const input = root.querySelector('input[type="hidden"]');
+    const panel = root.querySelector('.when-panel');
+    const day = root.querySelector('.w-day');
+    const hour = root.querySelector('.w-hour');
+    const min = root.querySelector('.w-min');
+    const ampm = root.querySelector('.w-ampm');
+    const err = root.querySelector('.w-err');
+    hour.innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+    min.innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${i * 5}">${pad2(i * 5)}</option>`).join('');
+    const setAmpm = (v) => ampm.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ampm === v)));
+    ampm.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setAmpm(b.dataset.ampm); });
+
+    const refresh = () => { root.querySelector('.when-text').textContent = describeAt(input.value); };
+    const open = () => {
+        day.innerHTML = Array.from({ length: 8 }, (_, i) => {
+            const date = brisbaneDateAfter(i);
+            const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(`${date}T00:00:00Z`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+            return `<option value="${date}">${label}</option>`;
+        }).join('');
+        // Start from the chosen time, or now rounded up to the next 5 minutes
+        let value = input.value;
+        if (!value) {
+            const t = Math.ceil((Date.now() + 10 * 3600 * 1000) / 300000) * 300000;
+            value = new Date(t).toISOString().slice(0, 16);
+        }
+        const [date, time] = value.split('T');
+        const [h, m] = time.split(':').map(Number);
+        day.value = date;
+        hour.value = String(h % 12 === 0 ? 12 : h % 12);
+        min.value = String(Math.floor(m / 5) * 5);
+        setAmpm(h < 12 ? 'am' : 'pm');
+        err.hidden = true;
+        panel.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+        day.focus();
+    };
+    const close = () => {
+        panel.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+    };
+    btn.addEventListener('click', () => (panel.hidden ? open() : close()));
+    root.querySelector('.w-cancel').addEventListener('click', () => { close(); btn.focus(); });
+    root.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) { close(); btn.focus(); } });
+    root.querySelector('.w-done').addEventListener('click', () => {
+        const pm = ampm.querySelector('[aria-pressed="true"]').dataset.ampm === 'pm';
+        const h12 = Number(hour.value) % 12;
+        const value = `${day.value}T${pad2(h12 + (pm ? 12 : 0))}:${pad2(Number(min.value))}`;
+        if (value < brisbaneNow()) {
+            err.textContent = `${describeAt(value).replace('Today, ', '')} today has already passed. Pick a later time, or another day.`;
+            err.hidden = false;
+            return;
+        }
+        input.value = value;
+        refresh();
+        close();
+        btn.focus();
+        onDone(value);
+    });
+    const picker = { refresh, close };
+    whenPickers.push(picker);
+    refresh();
+    return picker;
+}
+// "Today" and "Tomorrow" labels move on at midnight
+setInterval(() => whenPickers.forEach((p) => p.refresh()), 60000);
+
 // ---------- Plan: from A to B, with changes ----------
 const planLayer = L.layerGroup().addTo(map);
 let planShown = null; // the journey drawn on the map
@@ -666,7 +754,7 @@ function stationSearchBox(inputId, listId) {
         if (q.length < 2) return;
         timer = setTimeout(async () => {
             try {
-                const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}`);
+                const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}&places=1`);
                 for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
                 $(listId).innerHTML = found.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
             } catch (err) {
@@ -731,22 +819,19 @@ function planError(text) {
     $('plan-error').hidden = false;
 }
 
-function setupPlanWhen() {
-    const input = $('plan-when');
-    input.min = brisbaneNow();
-    input.max = new Date(Date.now() + (10 + 7 * 24) * 3600 * 1000).toISOString().slice(0, 16);
-    if (!input.value) input.value = brisbaneNow();
-}
+const planPicker = whenPicker('plan-pick', () => {
+    if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
+});
 $('plan-chips').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-when]');
     if (!btn) return;
     const v = btn.dataset.when;
-    const nowLocal = Date.now() + 10 * 3600 * 1000;
-    let target;
-    if (v === 'tomorrow') target = `${new Date(nowLocal + 86400 * 1000).toISOString().slice(0, 10)}T07:00`;
-    else target = new Date(nowLocal + Number(v) * 60000).toISOString().slice(0, 16);
-    $('plan-when').value = target;
-    if (plan.from && plan.to) findJourneys();
+    planPicker.close();
+    if (v === '0') $('plan-when').value = '';
+    else if (v === 'tomorrow') $('plan-when').value = `${brisbaneDateAfter(1)}T07:00`;
+    else $('plan-when').value = new Date(Date.now() + 10 * 3600 * 1000 + Number(v) * 60000).toISOString().slice(0, 16);
+    planPicker.refresh();
+    if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
 });
 
 $('plan-form').addEventListener('submit', (e) => {
@@ -776,7 +861,12 @@ async function findJourneys() {
     $('plan-to').value = plan.to.name;
 
     const when = $('plan-when').value;
-    const at = when && when > brisbaneNow() ? `&at=${encodeURIComponent(when)}` : '';
+    if (when && when < brisbaneNow()) {
+        $('plan-when').value = '';
+        planPicker.refresh();
+        return planError(`${describeAt(when)} has already passed. Pick a later time, or press Now.`);
+    }
+    const at = when ? `&at=${encodeURIComponent(when)}` : '';
     const go = $('plan-go');
     const list = $('plan-results');
     go.disabled = true;
@@ -785,7 +875,10 @@ async function findJourneys() {
     try {
         const res = await getJson(`/api/plan?${placeQuery('from', plan.from)}&${placeQuery('to', plan.to)}${at}`);
         plan.journeys = res.journeys;
-        $('plan-note').textContent = res.note ?? `${res.journeys.length} ${res.journeys.length === 1 ? 'journey' : 'journeys'} leaving from ${res.at}${res.planned ? ' (timetable; live delays show closer to the time)' : ', with live delays'}. Walks are estimates.`;
+        const n = `${res.journeys.length} ${res.journeys.length === 1 ? 'journey' : 'journeys'}`;
+        $('plan-note').textContent = res.note ?? (res.nextDay
+            ? `Nothing more today. ${n} tomorrow morning (timetable). Walks are estimates.`
+            : `${n} leaving from ${res.at}${res.planned ? ' (timetable; live delays show closer to the time)' : ', with live delays'}. Walks are estimates.`);
         renderJourneys();
         if (res.journeys.length) openPlanJourney(0);
         else planLayer.clearLayers();
@@ -824,7 +917,7 @@ function renderJourneys() {
 function legsHtml(j) {
     return j.legs.map((l) => {
         if (l.kind === 'walk') {
-            return `<li class="leg walk"><span class="t"></span><span class="d">Walk about ${l.minutes} min${l.to ? ` to ${placeName(l.to)}` : ' to where you’re going'}</span></li>`;
+            return `<li class="leg walk"><span class="t"></span><span class="d">Walk about ${l.minutes} min${l.to ? ` to ${placeName(l.to)}` : ` to ${placeName(plan.to, 'where you’re going')}`}</span></li>`;
         }
         const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
         return `<li class="leg" style="--c:${escapeHtml(l.color)}">
@@ -871,8 +964,9 @@ async function drawPlan(j) {
     if (planShown !== j) return; // another journey was picked meanwhile
     j.legs.forEach((l, i) => {
         if (l.kind === 'walk') {
-            const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? (plan.from?.lat !== undefined ? plan.from : null);
-            const b = l.to ?? (plan.to ? stations.find((s) => s.id === plan.to.id) : null);
+            const placeOf = (p) => (!p ? null : p.lat !== undefined ? p : stations.find((s) => s.id === p.id));
+            const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? placeOf(plan.from);
+            const b = l.to ?? placeOf(plan.to);
             if (a?.lat != null && b?.lat != null) {
                 L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { color: '#6e7a72', weight: 3, dashArray: '2 6', interactive: false }).addTo(planLayer);
                 all.push([a.lat, a.lng], [b.lat, b.lng]);
@@ -902,17 +996,17 @@ async function drawPlan(j) {
 function brisbaneNow() {
     return new Date(Date.now() + 10 * 3600 * 1000).toISOString().slice(0, 16);
 }
+let boardPicker = null;
 function setupWhen() {
-    const input = $('when-input');
-    const now = brisbaneNow();
-    input.min = now;
-    input.max = new Date(Date.now() + (10 + 7 * 24) * 3600 * 1000).toISOString().slice(0, 16);
-    input.value = state.at || now;
+    $('when-input').value = state.at && state.at > brisbaneNow() ? state.at : '';
+    boardPicker = whenPicker('board-pick', (value) => setWhen(value));
 }
 function setWhen(value) {
     state.at = value && value > brisbaneNow() ? value : '';
     $('when-now').hidden = !state.at;
-    if (!state.at) $('when-input').value = brisbaneNow();
+    $('when-input').value = state.at;
+    boardPicker?.refresh();
+    boardPicker?.close();
     saveUrl();
     loadBoard();
 }
@@ -977,11 +1071,9 @@ $('when-chips').addEventListener('click', (e) => {
         const base = state.at ? new Date(`${state.at}:00Z`).getTime() : Date.now() + 10 * 3600 * 1000;
         target = new Date(base + Number(v) * 60000).toISOString().slice(0, 16);
     }
-    $('when-input').value = target;
     setWhen(target);
 });
 
-$('when-input').addEventListener('change', (e) => setWhen(e.target.value));
 $('when-now').addEventListener('click', () => setWhen(''));
 setupWhen();
 $('when-now').hidden = !state.at;
@@ -1037,7 +1129,6 @@ async function loadAlerts() {
 // ---------- Start ----------
 async function start() {
     showTab(state.tab);
-    setupPlanWhen();
     drawTracks();
     try {
         await Promise.all([loadLines(), loadStations()]);

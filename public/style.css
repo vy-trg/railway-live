@@ -492,3 +492,14 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .leg .d span { font-size: 0.8rem; color: var(--muted); }
 .change { font-size: 0.8rem; font-weight: 800; }
 .change.make { color: var(--ontime); } .change.tight { color: var(--late); } .change.miss { color: var(--verylate); }
+
+/* Day and time picker with a Done button (the browser's own picker can't have one) */
+.when-pick { position: relative; }
+.when-btn { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--paper); border-radius: 14px; padding: 12px 14px; font: inherit; font-weight: 700; color: var(--ink); cursor: pointer; }
+.when-btn[aria-expanded="true"] { border-color: var(--gum); }
+.when-panel { margin-top: 8px; display: grid; gap: 8px; padding: 14px; border-radius: 16px; background: var(--paper); border: 1px solid var(--line); box-shadow: 0 10px 30px rgb(0 0 0 / 0.08); }
+.w-time { display: flex; align-items: center; gap: 6px; }
+.w-time select { width: auto; flex: 1; min-width: 0; }
+.w-time .seg { flex: none; }
+.when-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.when-actions .primary-btn { padding: 10px 22px; }
