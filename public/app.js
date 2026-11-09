@@ -91,6 +91,8 @@ function saveUrl() {
 // ---------- Tabs ----------
 const TABS = ['trains', 'plan', 'board', 'alerts', 'stats'];
 function showTab(name) {
+    // Another tab: the trip that was open belongs to the tab you left
+    if (name !== state.tab && state.selected) closeJourney();
     state.tab = name;
     for (const t of TABS) {
         $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
@@ -413,15 +415,35 @@ function showBanner(text, urgent = false) {
     bannerTimer = setTimeout(() => hideWithExit(el), urgent ? 30000 : 5000);
 }
 
+// How many pixels at the bottom of the map are covered (the trip sheet on a phone in full screen),
+// so the vehicle is never centred behind it
+function hiddenBottom() {
+    const sheet = $('journey');
+    if (sheet.hidden || window.innerWidth >= 1000) return 0;
+    const m = map.getContainer().getBoundingClientRect();
+    return Math.max(0, m.bottom - sheet.getBoundingClientRect().top);
+}
+// Go to a point, keeping it in the part of the map you can see
+function focusMap(latlng, zoom) {
+    const z = Math.max(map.getZoom(), zoom);
+    const shift = hiddenBottom() / 2;
+    const target = shift ? map.unproject(map.project(latlng, z).add([0, shift]), z) : latlng;
+    // flyTo zooms out and back in: the view travels in an arc rather than a straight slide
+    if (reduceMotion()) map.setView(target, z);
+    else map.flyTo(target, z, { duration: 0.6 });
+}
+function focusBounds(points, maxZoom) {
+    const pad = hiddenBottom();
+    map.flyToBounds(points, { paddingTopLeft: [40, 40], paddingBottomRight: [40, 40 + pad], maxZoom, duration: reduceMotion() ? 0 : 0.8 });
+}
+
 async function selectTrain(tripId) {
     state.selected = tripId;
     showAllStops = false;
-    const train = lastTrains.find((t) => t.tripId === tripId);
-    // flyTo zooms out and back in: the view travels in an arc rather than a straight slide
-    if (train) {
-        if (reduceMotion()) map.setView([train.lat, train.lng], Math.max(map.getZoom(), 12));
-        else map.flyTo([train.lat, train.lng], Math.max(map.getZoom(), 12), { duration: 0.6 });
-    }
+    setSheet(false); // a phone starts with the short sheet, so the map is clear
+    // On a phone the map is at the top of the page: bring it into view
+    if (window.innerWidth < 1000 && !document.body.classList.contains('map-full')) window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    // The map moves once the trip is loaded (drawJourney), when the sheet's size is known
     drawTrains();
     renderTrainList();
     await loadJourney();
@@ -448,8 +470,8 @@ function drawJourney(j) {
     journeyFitted = j.tripId;
     // A running vehicle: go to it. Otherwise show the whole journey.
     const live = trainMarkers.size && lastTrains.find((t) => t.tripId === j.tripId);
-    if (live) map.flyTo([live.lat, live.lng], Math.max(map.getZoom(), 13), { duration: reduceMotion() ? 0 : 0.6 });
-    else map.flyToBounds(line, { padding: [40, 40], maxZoom: 14, duration: reduceMotion() ? 0 : 0.8 });
+    if (live) focusMap([live.lat, live.lng], 13);
+    else focusBounds(line, 14);
 }
 
 async function loadJourney() {
@@ -457,7 +479,6 @@ async function loadJourney() {
     const card = $('journey');
     try {
         const j = await getJson(`/api/trips/${encodeURIComponent(state.selected)}`);
-        drawJourney(j);
         const pill = $('journey-line');
         pill.textContent = j.mode === 'bus' ? `Bus ${j.routeShort} · ${j.routeName}` : j.routeName;
         pill.style.background = j.color;
@@ -481,9 +502,12 @@ async function loadJourney() {
             </li>`).join('');
         if (card.hidden) staggerOnce(stops); // stops settle in one after another when the card opens
         card.hidden = false;
-        // Keep the next stop in view inside the card
-        if (window.innerWidth < 1000 && !card.dataset.shown) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Computer: the trip takes the list's place (the map stays clear)
+        document.querySelector('.panel').classList.add('has-trip');
+        if (!card.dataset.shown && window.innerWidth >= 1000) document.querySelector('.panel').scrollTop = 0;
         card.dataset.shown = '1';
+        // Drawn after the sheet is on screen, so the map knows how much of it the sheet covers
+        drawJourney(j);
     } catch (err) {
         console.error('Failed to load journey:', err);
         card.hidden = true;
@@ -496,10 +520,44 @@ function closeJourney() {
     journeyFitted = null;
     hideWithExit($('journey'), 180);
     delete $('journey').dataset.shown;
+    document.querySelector('.panel').classList.remove('has-trip');
     drawTrains();
     renderTrainList();
 }
 $('journey-close').addEventListener('click', closeJourney);
+$('journey-back').addEventListener('click', () => {
+    const tripId = state.selected;
+    closeJourney();
+    // Back on the list, at the row you picked
+    requestAnimationFrame(() => document.querySelector(`[data-trip="${CSS.escape(tripId ?? '')}"]`)?.focus());
+});
+
+// Phone sheet: short (line, destination, next stop) or tall (every stop). Tap the handle or the
+// title, or drag the handle up or down.
+function setSheet(open) {
+    const card = $('journey');
+    card.dataset.expanded = String(open);
+    $('journey-handle').setAttribute('aria-expanded', String(open));
+    $('journey-handle').setAttribute('aria-label', open ? 'Show fewer stops' : 'Show all stops');
+    if (!open) card.scrollTop = 0;
+}
+const sheetOpen = () => $('journey').dataset.expanded === 'true';
+let dragged = false; // a drag already moved the sheet: the click that follows mustn't move it back
+$('journey-handle').addEventListener('click', () => {
+    if (dragged) { dragged = false; return; }
+    setSheet(!sheetOpen());
+});
+$('journey-title').addEventListener('click', () => { if (window.innerWidth < 1000) setSheet(!sheetOpen()); });
+let dragFrom = null;
+$('journey-handle').addEventListener('pointerdown', (e) => { dragFrom = e.clientY; });
+window.addEventListener('pointerup', (e) => {
+    if (dragFrom === null) return;
+    const moved = e.clientY - dragFrom;
+    dragFrom = null;
+    if (Math.abs(moved) > 30) dragged = true;
+    if (moved < -30) setSheet(true);
+    else if (moved > 30) setSheet(false);
+});
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.selected) closeJourney();
 });

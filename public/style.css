@@ -106,9 +106,33 @@ button { font: inherit; color: inherit; }
     background: var(--paper); border-radius: var(--radius); box-shadow: var(--shadow);
     padding: 16px 18px; margin-top: 12px;
 }
+/* Computer: the trip takes the panel's place, under the tabs; the list comes back with "Back to list" */
 @media (min-width: 1000px) {
-    .journey { position: absolute; z-index: 600; top: 14px; right: 14px; width: 320px; max-height: calc(100% - 28px); overflow: auto; margin: 0; }
+    .journey { margin: 0 0 12px; }
+    .panel.has-trip .view { display: none; }
+    .sheet-handle { display: none; }
+    #journey-close { display: none; }
+    .journey-head .line-pill { margin-left: auto; }
 }
+/* Phone: a sheet at the bottom, above the tabs. Closed it shows only the line, where it's going and the
+   next stop, so the map stays clear; pull it up (or tap) for every stop. */
+@media (max-width: 999px) {
+    .journey {
+        position: fixed; z-index: 1100; left: 8px; right: 8px; margin: 0;
+        bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+        max-height: min(62vh, calc(100dvh - 160px)); overflow: auto; overscroll-behavior: contain;
+        padding-top: 4px; box-shadow: 0 -6px 24px rgb(40 30 15 / 0.18);
+        transition: max-height 240ms var(--ease-out);
+    }
+    .journey[data-expanded="false"] { max-height: 132px; overflow: hidden; }
+    .journey[data-expanded="false"] #journey-body { display: none; }
+    .back-btn { display: none; }
+    .sheet-handle { display: block; }
+    body.map-full .journey { z-index: 3100; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+}
+.sheet-handle { width: 100%; height: 22px; border: 0; background: transparent; cursor: grab; touch-action: none; padding: 0; }
+.sheet-handle span { display: block; width: 40px; height: 5px; border-radius: 999px; background: var(--line); margin: 6px auto; }
+.back-btn { margin-right: auto; font-weight: 800; }
 .journey-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .journey h2 { margin: 10px 0 2px; font-size: 1.25rem; font-weight: 800; letter-spacing: -0.01em; }
 .journey p { margin: 0 0 12px; font-size: 0.88rem; }
@@ -313,11 +337,17 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 
 /* 11/12, 1, 10, 15: the journey card comes in from the side you picked the train on (the list
    is on the right) and leaves the same way, a little faster */
-.journey:not([hidden]) { animation: pop-in 220ms var(--ease-out); transform-origin: top right; }
+.journey:not([hidden]) { animation: pop-in 220ms var(--ease-out); transform-origin: top center; }
 .journey.leaving { animation: pop-out 180ms var(--ease-in) forwards; }
 @media (min-width: 1000px) {
     .journey:not([hidden]) { animation-name: slide-in-right; }
     .journey.leaving { animation-name: slide-out-right; }
+}
+@keyframes sheet-up { from { opacity: 0; transform: translateY(40px); } }
+@keyframes sheet-down { to { opacity: 0; transform: translateY(40px); } }
+@media (max-width: 999px) {
+    .journey:not([hidden]) { animation-name: sheet-up; }
+    .journey.leaving { animation-name: sheet-down; }
 }
 /* Banner drops from the top and goes back up */
 .banner:not([hidden]) { animation: drop-in 200ms var(--ease-out); }
@@ -339,7 +369,9 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .tabs button:active, .icon-btn:active, .bell:active, .more-btn:active { transform: scale(0.97); }
 
 /* 9: the tab highlight slides between Trains / Next trains / Alerts */
-.tabs { position: relative; isolation: isolate; }
+/* relative only on a computer: on a phone the tabs are fixed to the bottom of the screen (set above) */
+.tabs { isolation: isolate; }
+@media (min-width: 1000px) { .tabs { position: relative; } }
 .tabs::before {
     content: ""; position: absolute; z-index: -1; top: 4px; bottom: 4px; left: 4px;
     width: calc((100% - 8px - 16px) / 5); border-radius: 999px; background: var(--paper);

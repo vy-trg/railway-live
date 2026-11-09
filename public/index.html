@@ -41,19 +41,25 @@
                 <li class="legend-shapes" aria-label="Marker shapes: circle train, square tram, diamond ferry"><i class="shape-train"></i>Train or bus <i class="shape-tram"></i>Tram <i class="shape-ferry"></i>Ferry</li>
             </ul>
 
-            <!-- One train's journey, shown when a train is picked -->
-            <article id="journey" class="journey" hidden aria-live="polite">
-                <header class="journey-head">
-                    <span id="journey-line" class="line-pill"></span>
-                    <button id="journey-close" class="icon-btn" type="button" aria-label="Close journey">×</button>
-                </header>
-                <h2 id="journey-title"></h2>
-                <p id="journey-sub" class="muted"></p>
-                <ol id="journey-stops" class="stops"></ol>
-            </article>
         </section>
 
         <aside class="panel">
+            <!-- One trip's stops, shown when a train or bus is picked. On a computer it takes the panel's place
+                 (the map stays clear); on a phone it's a sheet at the bottom that you pull up or down. -->
+            <article id="journey" class="journey" hidden aria-labelledby="journey-title" data-expanded="false">
+                <button id="journey-handle" class="sheet-handle" type="button" aria-controls="journey-body" aria-expanded="false" aria-label="Show all stops"><span aria-hidden="true"></span></button>
+                <header class="journey-head">
+                    <button id="journey-back" class="link-btn back-btn" type="button">← Back to list</button>
+                    <span id="journey-line" class="line-pill"></span>
+                    <button id="journey-close" class="icon-btn" type="button" aria-label="Close">×</button>
+                </header>
+                <h2 id="journey-title"></h2>
+                <p id="journey-sub" class="muted" aria-live="polite"></p>
+                <div id="journey-body">
+                    <ol id="journey-stops" class="stops"></ol>
+                </div>
+            </article>
+
             <nav class="tabs" role="tablist" aria-label="Sections">
                 <button role="tab" id="tab-trains" aria-controls="view-trains" aria-selected="true" type="button">Live</button>
                 <button role="tab" id="tab-plan" aria-controls="view-plan" aria-selected="false" type="button">Plan</button>
