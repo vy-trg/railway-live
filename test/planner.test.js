@@ -180,3 +180,24 @@ test('walking between platforms of one station is a platform change', () => {
   const legs = tidyLegs([ride(2, 0), { kind: 'walk', fromStop: 0, toStop: 1, secs: 120 }, ride(1, 3)], st);
   assert.equal(legs[1].platformChange, true);
 });
+
+// ---------- Get on at the nearest stop ----------
+import { nearestBoarding } from '../planner.js';
+
+test('the first bus is boarded at the closest stop you can reach in time, not an earlier one on its route', () => {
+  // Bus stops at 0, 1, 2, 3 (2 minutes apart) and you live next to stop 2
+  const pattern = { stops: [10, 11, 12, 13], dep: [0, 120, 240, 360], arr: [0, 120, 240, 360], last: [false, false, false, true] };
+  const leg = { kind: 'ride', pattern: 0, fromPos: 0, toPos: 3, fromStop: 10, departSecs: 1000, stopCount: 3 };
+  const walks = new Map([[10, 720], [11, 500], [12, 180]]);
+  const moved = nearestBoarding(leg, pattern, walks, 200);
+  assert.equal(moved.fromStop, 12);
+  assert.equal(moved.departSecs, 1240);
+  assert.equal(moved.stopCount, 1);
+});
+
+test('the nearest stop is skipped when you can\'t get there before the bus', () => {
+  const pattern = { stops: [10, 11], dep: [0, 60], arr: [0, 60], last: [false, true] };
+  const leg = { kind: 'ride', fromPos: 0, toPos: 1, fromStop: 10, departSecs: 1000, stopCount: 1 };
+  // stop 10 is 12 minutes away and the bus leaves it at 1000: leaving at 200, 920 is in time
+  assert.equal(nearestBoarding(leg, pattern, new Map([[10, 720]]), 200).fromStop, 10);
+});

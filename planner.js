@@ -167,6 +167,32 @@ export function placeToStops(place, stops, byStation, maxM = MAX_ACCESS_M, mode 
   return out;
 }
 
+// Pure: get on the first vehicle at the stop closest to you. The search finds the earliest arrival,
+// and the same bus arrives just as early whether you walk 12 minutes to an earlier stop on its route
+// or 3 minutes to a later one. Pick the stop with the shortest walk you can still make in time
+// (a later stop on a tie), so you're never sent past the nearest stop.
+// startWalk: stop -> seconds to get there from where you are; startSecs: when you leave
+export function nearestBoarding(leg, pattern, startWalk, startSecs) {
+  const tripStart = leg.departSecs - pattern.dep[leg.fromPos];
+  let best = null;
+  for (let pos = leg.fromPos; pos < leg.toPos; pos += 1) {
+    if (pattern.last[pos]) continue;
+    const walk = startWalk.get(pattern.stops[pos]);
+    if (walk === undefined) continue;
+    const leaves = tripStart + pattern.dep[pos];
+    if (startSecs + walk > leaves) continue; // can't get there before it leaves
+    if (!best || walk <= best.walk) best = { pos, walk, leaves };
+  }
+  if (!best || best.pos === leg.fromPos) return leg;
+  return {
+    ...leg,
+    fromPos: best.pos,
+    fromStop: pattern.stops[best.pos],
+    departSecs: best.leaves,
+    stopCount: leg.toPos - best.pos,
+  };
+}
+
 // Pure: no walk twice in a row (one walk from the first place to the last), and no walk of a few
 // metres at the very start or end (a place anchored on the stop itself). A walk between two stops
 // of the same station is marked as a platform change.
@@ -201,7 +227,9 @@ export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 
   const journeys = planJourneys(net.network, trips, sources, targets, { count, extraChangeSecs, startWalks: Boolean(from.stationId) });
   // Put the walk to the first stop back in, so the journey reads from where you are
   return {
-    journeys: journeys.map((j) => {
+    journeys: journeys.map((raw) => {
+      const j = { ...raw, legs: [...raw.legs] };
+      if (j.legs[0]?.kind === 'ride') j.legs[0] = nearestBoarding(j.legs[0], net.network.patterns[j.legs[0].pattern], startWalk, secs);
       const first = j.legs[0];
       const walk = first ? startWalk.get(first.fromStop) ?? 0 : 0;
       const how = from.stationId ? 'walk' : access;
