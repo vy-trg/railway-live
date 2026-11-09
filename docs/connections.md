@@ -64,8 +64,8 @@ flowchart LR
 | Day | What |
 |---|---|
 | Mon 9 Nov | This page: problem, change points, route ids, walking estimates, diagram |
-| Tue 10 Nov | Load 598 and M1 timetables into Postgres; count rows and size before loading to Neon |
-| Wed 11 Nov | `connection.js`: the model and Make it / Tight / Miss, with tests |
+| Tue 10 Nov | ~~Load 598 and M1 timetables~~ Done early in PR #14: every SEQ bus is loaded (598: 292 trips, M1: 1,292 trips; whole database 64 MB with trip patterns). Brought Wednesday's `connection.js` forward instead |
+| Wed 11 Nov | ~~`connection.js`~~ done on Tue (13 tests). Wednesday: bus departures from the change stop out of the timetable (query + tests) |
 | Thu 12 Nov | Live bus delays from TripUpdates/Bus (two routes only); `GET /api/connection` |
 | Fri 13 Nov | Connection view on the phone |
 | Sat 14 Nov | Make-it rate by hour from the recorded delays |
