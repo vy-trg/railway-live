@@ -875,6 +875,13 @@ $('plan-chips').addEventListener('click', (e) => {
     if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
 });
 
+// More time to change: remembered on this device only, and re-plans straight away
+try { $('plan-more-time').checked = localStorage.getItem('moreTime') === '1'; } catch { /* storage blocked: off */ }
+$('plan-more-time').addEventListener('change', (e) => {
+    try { localStorage.setItem('moreTime', e.target.checked ? '1' : '0'); } catch { /* fine without */ }
+    if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
+});
+
 $('plan-form').addEventListener('submit', (e) => {
     e.preventDefault();
     findJourneys();
@@ -908,7 +915,7 @@ async function findJourneys() {
     $('plan-to').value = plan.to.name;
 
     const when = $('plan-when').value;
-    const at = when ? `&at=${encodeURIComponent(when)}` : '';
+    const at = (when ? `&at=${encodeURIComponent(when)}` : '') + ($('plan-more-time').checked ? '&moreTime=1' : '');
     const go = $('plan-go');
     const list = $('plan-results');
     go.disabled = true;

@@ -39,6 +39,7 @@ To give several options, the planner runs again leaving a minute after the first
 | Walk between nearby stops | up to 400 m, 4.5 km/h, +20% for streets, at least 2 min | Straight lines are shorter than real paths |
 | "Near me" and walking at the end | stops within 800 m | About 10 minutes' walk |
 | Changes | up to 4 (5 vehicles) | More is rarely useful |
+| Give me more time to change (switch) | at least 5 mins at every change, on top of the walk | Fewer tight changes; may arrive a little later |
 | Make it / Tight / Miss | `connection.js`: 3+ min spare / 0–3 / less | Same rule as the train + bus feature |
 
 ## On the map

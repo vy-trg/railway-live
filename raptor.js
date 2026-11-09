@@ -7,6 +7,7 @@
 // or past 86400 after midnight).
 
 export const MIN_CHANGE_SECS = 60; // getting off one vehicle and onto another at the same stop
+export const EXTRA_CHANGE_SECS = 5 * 60; // "Give me more time to change": spare time at every change
 
 // network: {
 //   stopCount,
@@ -37,7 +38,8 @@ function firstTripFrom(starts, depOffset, time) {
 // sources: [{ stop, secs }]  when you can be at each starting stop (already includes the walk to it)
 // targets: Map(stopIdx -> secs of walking from that stop to where you're going)
 // Returns the best journey for each number of vehicles (fewer changes vs earlier arrival).
-export function raptor(network, trips, sources, targets, maxRounds = 5) {
+// extraChangeSecs: spare time wanted at every change, on top of any walk (0 = catch the first one you can)
+export function raptor(network, trips, sources, targets, maxRounds = 5, extraChangeSecs = 0) {
   const n = network.stopCount;
   const INF = Infinity;
   const best = new Float64Array(n).fill(INF);
@@ -97,7 +99,11 @@ export function raptor(network, trips, sources, targets, maxRounds = 5) {
         }
         // Get on (or onto an earlier trip) if we could be here in time from the round before
         if (!p.last[i] && prev[s] < INF) {
-          const ready = prev[s] + (prevLabels[s]?.kind === 'ride' ? MIN_CHANGE_SECS : 0);
+          // A change is getting here off a vehicle, or walking here after one (not the walk from the start)
+          const l = prevLabels[s];
+          const changing = l?.kind === 'ride' || (l?.kind === 'walk' && l.round > 0);
+          const buffer = l?.kind === 'ride' ? Math.max(MIN_CHANGE_SECS, extraChangeSecs) : changing ? extraChangeSecs : 0;
+          const ready = prev[s] + buffer;
           if (trip === -1 || ready <= t.starts[trip] + p.dep[i]) {
             const earlier = firstTripFrom(t.starts, p.dep[i], ready);
             if (earlier !== -1 && (trip === -1 || earlier < trip)) {
@@ -185,13 +191,13 @@ function unwind(network, trips, labels, k, stop, egressSecs) {
 
 // Several journeys to choose from: plan, then plan again leaving just after the first vehicle
 // of the earliest option, until there are enough. Same trips twice are dropped.
-export function planJourneys(network, trips, sources, targets, { count = 5, maxRounds = 5 } = {}) {
+export function planJourneys(network, trips, sources, targets, { count = 5, maxRounds = 5, extraChangeSecs = 0 } = {}) {
   const found = [];
   const seen = new Set();
   let shift = 0;
   for (let run = 0; run < count * 2 && found.length < count; run += 1) {
     const shifted = sources.map((s) => ({ stop: s.stop, secs: s.secs + shift }));
-    const results = raptor(network, trips, shifted, targets, maxRounds);
+    const results = raptor(network, trips, shifted, targets, maxRounds, extraChangeSecs);
     if (results.length === 0) break;
     for (const r of results) {
       const key = r.legs.filter((l) => l.kind === 'ride').map((l) => l.tripId).join('>');

@@ -9,7 +9,7 @@ import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
 import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX } from './landmarks.js';
 import { walkRoute } from './walk.js';
-import { distanceM } from './raptor.js';
+import { distanceM, EXTRA_CHANGE_SECS } from './raptor.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
@@ -231,7 +231,9 @@ app.get('/api/plan', handle(async (req, res) => {
         ({ date, secs } = brisbaneClock(now));
     }
 
-    let result = await plan(from, to, date, secs);
+    // ?moreTime=1: at least 5 spare minutes at every change
+    const options = { extraChangeSecs: req.query.moreTime === '1' ? EXTRA_CHANGE_SECS : 0 };
+    let result = await plan(from, to, date, secs, 5, options);
     // Nothing more tonight: show the first journeys tomorrow morning instead of nothing
     let nextDay = false;
     if (!result.error && result.journeys.length === 0) {
@@ -239,7 +241,7 @@ app.get('/api/plan', handle(async (req, res) => {
         d.setUTCDate(d.getUTCDate() + 1);
         date = d.toISOString().slice(0, 10);
         secs = 3 * 3600;
-        result = await plan(from, to, date, secs);
+        result = await plan(from, to, date, secs, 5, options);
         nextDay = true;
     }
     if (result.error === 'from') return res.json({ journeys: [], note: 'No stop within 800 m of where you are' });
