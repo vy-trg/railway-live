@@ -66,7 +66,9 @@ const state = {
     at: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(params.get('at') ?? '') ? params.get('at') : '', // planned time, '' = now
     selected: null, // trip id of the train whose journey is open
 };
-let statsDays = 7; // period on the Stats tab
+let statsDays = 1; // period on the Stats tab: today first
+// "1 min", "4 mins"
+const mins = (n) => `${n} min${n === 1 ? '' : 's'}`;
 function saveUrl() {
     const p = new URLSearchParams();
     if (state.mode) p.set('mode', state.mode);
@@ -349,7 +351,7 @@ async function checkReminder() {
         if (!stop || stop.state === 'passed' || stop.state === 'skipped') {
             reminder = null; // the train has gone past it (or won't stop): nothing left to remind
         } else if (stop.etaSec <= REMIND_BEFORE_SEC) {
-            const text = `${stop.name} in about ${Math.max(1, Math.round(stop.etaSec / 60))} min. Get ready to get off.`;
+            const text = `${stop.name} in about ${mins(Math.max(1, Math.round(stop.etaSec / 60)))}. Get ready to get off.`;
             showBanner(text, true);
             if ('Notification' in window && Notification.permission === 'granted') {
                 try { new Notification('Railway Live', { body: text }); } catch { /* some phones only allow this from a service worker */ }
@@ -476,7 +478,7 @@ function renderFeedStatus() {
     }
     if (!lastUpdated) return;
     const seconds = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
-    const age = seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)} min ago`;
+    const age = seconds < 60 ? `${seconds}s ago` : `${mins(Math.round(seconds / 60))} ago`;
     text.textContent = feedState === 'stale' ? `Feed down · data from ${age}` : `Live · ${age}`;
 }
 setInterval(renderFeedStatus, 5000);
@@ -514,7 +516,7 @@ function renderSummary(s) {
     const onTime = $('kpi-ontime');
     onTime.textContent = s.onTimePercent === null ? '–' : `${s.onTimePercent}%`;
     onTime.className = s.onTimePercent === null ? '' : s.onTimePercent >= 90 ? 'good' : s.onTimePercent >= 75 ? 'warn' : 'bad';
-    $('kpi-delay').textContent = `${Math.round(s.avgLateMinutes)} min`;
+    $('kpi-delay').textContent = mins(Math.round(s.avgLateMinutes));
     $('kpi-delay-wrap').hidden = !s.avgLateMinutes;
 }
 
@@ -887,8 +889,10 @@ async function findJourneys() {
         const n = `${res.journeys.length} ${res.journeys.length === 1 ? 'journey' : 'journeys'}`;
         $('plan-note').textContent = res.note ?? (res.nextDay
             ? `Nothing more today. ${n} tomorrow morning (timetable). Walks are estimates.`
-            : `${n} leaving from ${res.at}${res.past ? ' (timetable: this time has passed, so there are no live delays)' : res.planned ? ' (timetable; live delays show closer to the time)' : ', with live delays'}. Walks are estimates.`);
-        renderJourneys();
+            : res.past ? `${n} leaving from ${res.at}. This time has passed, so these are timetable times with no live delays.`
+                : res.planned ? `${n} leaving from ${res.at}. Timetable times: TransLink shares delays only shortly before and during a trip, so check again closer to the time.`
+                    : `${n} leaving from ${res.at}. Delays are live where TransLink has them; trips that haven't started yet show timetable times. Walks are estimates.`);
+        renderJourneys(res);
         if (res.journeys.length) openPlanJourney(0);
         else { planLayer.clearLayers(); setPlanFocus(false); planShown = null; }
     } catch (err) {
@@ -906,17 +910,56 @@ const CHANGE_TEXT = { make: 'Make it', tight: 'Tight change', miss: 'Likely to m
 const legName = (l) => (l.mode === 'train' ? l.routeName.replace(/ line$/i, '') || 'Train' : `${l.mode === 'bus' ? 'Bus' : l.mode === 'tram' ? 'Tram' : 'Ferry'} ${l.routeShort}`);
 const placeName = (p, fallback) => escapeHtml((p?.name ?? fallback).replace(/ (station|ferry terminal)$/, ''));
 
-function renderJourneys() {
+const lateText = (sec) => `${mins(Math.round(Math.abs(sec) / 60))} ${sec > 0 ? 'late' : 'early'}`;
+
+// Which journey to take right now: the earliest real arrival, skipping ones with a change
+// you're likely to miss or a cancelled vehicle. Only when planning for now (live delays known).
+function bestNow(journeys, live) {
+    if (!live) return -1;
+    let best = -1;
+    journeys.forEach((j, i) => {
+        if (j.risky === 'miss') return;
+        if (best === -1 || j.arriveExpectedSecs < journeys[best].arriveExpectedSecs) best = i;
+    });
+    return best;
+}
+
+// One line under the times saying what live data says about this journey
+function journeyStatus(j, isNow, best, i) {
+    const rides = j.legs.filter((l) => l.kind === 'ride');
+    const cancelled = rides.find((r) => r.status === 'cancelled');
+    if (cancelled) return `<span class="trip-flag miss">${escapeHtml(legName(cancelled))} is cancelled</span>`;
+    const missed = rides.find((r) => r.change === 'miss');
+    if (missed) {
+        const better = best !== -1 && best !== i ? plan.journeys[best] : null;
+        return `<span class="trip-flag miss">Likely to miss the ${escapeHtml(legName(missed))}${better ? `: take the ${escapeHtml(better.leave)} instead (arrives ${escapeHtml(better.arriveExpected ?? better.arrive)})` : ''}</span>`;
+    }
+    const parts = [];
+    if (j.lateBySec >= 60) parts.push(`<span class="trip-flag tight">Running ${lateText(j.lateBySec)}: arrives ${escapeHtml(j.arriveExpected)}</span>`);
+    else if (j.live) parts.push('<span class="trip-flag ok">On time so far</span>');
+    else if (isNow) parts.push('<span class="trip-flag none">No live data yet: timetable times</span>');
+    if (rides.some((r) => r.change === 'tight')) parts.push('<span class="trip-flag tight">Tight change</span>');
+    return parts.join('');
+}
+
+function renderJourneys(res) {
     const list = $('plan-results');
+    const isNow = !res.planned && !res.nextDay;
+    const best = bestNow(plan.journeys, isNow && plan.journeys.some((j) => j.live));
     list.innerHTML = plan.journeys.map((j, i) => {
         const rides = j.legs.filter((l) => l.kind === 'ride');
-        const chain = rides.map((l) => `<span class="badge" style="--c:${escapeHtml(l.color)};--t:${escapeHtml(l.textColor)}">${escapeHtml(l.mode === 'train' ? 'Train' : l.routeShort)}</span>`).join('<span class="sep" aria-hidden="true">›</span>');
-        const flag = j.risky ? `<span class="trip-flag ${j.risky}">${j.risky === 'miss' ? 'A change may be missed' : 'Tight change'}</span>` : '';
-        return `<li class="trip-card" data-i="${i}" aria-expanded="false">
-          <button type="button" aria-label="${escapeHtml(`Leave ${j.leave}, arrive ${j.arrive}, ${j.minutes} minutes, ${j.changes} changes. Show details`)}">
-            <span class="trip-head"><span class="times">${escapeHtml(j.leave)} → ${escapeHtml(j.arrive)}${j.arriveExpected ? `<small>now ${escapeHtml(j.arriveExpected)}</small>` : ''}</span>
-              <span class="meta">${j.minutes} min · ${j.changes === 0 ? 'direct' : `${j.changes} change${j.changes > 1 ? 's' : ''}`}</span></span>
-            <span class="trip-chain">${chain}</span>${flag}
+        const chain = rides.map((l) => {
+            const late = l.delaySec !== null && l.delaySec >= 60 ? `<i>+${Math.round(l.delaySec / 60)}</i>` : '';
+            return `<span class="badge" style="--c:${escapeHtml(l.color)};--t:${escapeHtml(l.textColor)}">${escapeHtml(l.mode === 'train' ? 'Train' : l.routeShort)}${late}</span>`;
+        }).join('<span class="sep" aria-hidden="true">›</span>');
+        const tag = i === best && plan.journeys.length > 1 ? '<span class="best-tag">Best right now</span>' : '';
+        return `<li class="trip-card${i === best ? ' best' : ''}" data-i="${i}" aria-expanded="false">
+          <button type="button" aria-label="${escapeHtml(`Leave ${j.leave}, arrive ${j.arriveExpected ?? j.arrive}, ${j.minutes} minutes, ${j.changes} changes. Show details`)}">
+            ${tag}
+            <span class="trip-head"><span class="times">${escapeHtml(j.leave)} → ${j.arriveExpected ? `<s>${escapeHtml(j.arrive)}</s> ${escapeHtml(j.arriveExpected)}` : escapeHtml(j.arrive)}</span>
+              <span class="meta">${mins(j.minutes)} · ${j.changes === 0 ? 'direct' : `${j.changes} change${j.changes > 1 ? 's' : ''}`}</span></span>
+            <span class="trip-chain">${chain}</span>
+            <span class="trip-status">${journeyStatus(j, isNow, best, i)}</span>
           </button>
           <ol class="legs" hidden></ol>
         </li>`;
@@ -926,14 +969,18 @@ function renderJourneys() {
 function legsHtml(j) {
     return j.legs.map((l) => {
         if (l.kind === 'walk') {
-            return `<li class="leg walk"><span class="t"></span><span class="d">Walk about ${l.minutes} min${l.to ? ` to ${placeName(l.to)}` : ` to ${placeName(plan.to, 'where you’re going')}`}</span></li>`;
+            return `<li class="leg walk"><span class="t"></span><span class="d">Walk about ${mins(l.minutes)}${l.to ? ` to ${placeName(l.to)}` : ` to ${placeName(plan.to, 'where you’re going')}`}</span></li>`;
         }
         const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
+        const status = l.status === 'cancelled' || l.live ? statusHtml(l.status, l.statusText) : '<span class="muted">Timetable (no live data yet)</span>';
+        const arriveLate = l.arriveExpected && l.arriveDelaySec !== null
+            ? `<s>${escapeHtml(l.arrive)}</s> <b class="late-text">${escapeHtml(l.arriveExpected)} (${lateText(l.arriveDelaySec)})</b>`
+            : escapeHtml(l.arrive);
         return `<li class="leg" style="--c:${escapeHtml(l.color)}">
-          <span class="t">${escapeHtml(l.depart)}${l.departExpected ? `<small>now ${escapeHtml(l.departExpected)}</small>` : ''}</span>
+          <span class="t">${l.departExpected ? `<s>${escapeHtml(l.depart)}</s><small>${escapeHtml(l.departExpected)}</small>` : escapeHtml(l.depart)}</span>
           <span class="d">${change}<b>${escapeHtml(legName(l))} to ${escapeHtml(l.headsign)}</b>
-            <span>From ${placeName(l.from)}${l.from?.platform ? `, platform ${escapeHtml(l.from.platform)}` : ''} · ${statusHtml(l.status, l.statusText)}</span>
-            <span>${l.stops} stop${l.stops === 1 ? '' : 's'} · get off at ${placeName(l.to)}, ${escapeHtml(l.arriveExpected ?? l.arrive)}</span></span>
+            <span>From ${placeName(l.from)}${l.from?.platform ? `, platform ${escapeHtml(l.from.platform)}` : ''} · ${status}</span>
+            <span>${l.stops} stop${l.stops === 1 ? '' : 's'} · get off at ${placeName(l.to)}, ${arriveLate}</span></span>
         </li>`;
     }).join('');
 }
@@ -977,25 +1024,23 @@ async function drawPlan(j) {
             const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? placeOf(plan.from);
             const b = l.to ?? placeOf(plan.to);
             if (a?.lat != null && b?.lat != null) {
-                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#fffaf3', weight: 8 }).addTo(planLayer);
-                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#24312b', weight: 4, dashArray: '1 8', lineCap: 'round' }).addTo(planLayer);
+                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#3d4a43', weight: 4, dashArray: '0.1 8', lineCap: 'round' }).addTo(planLayer);
                 all.push([a.lat, a.lng], [b.lat, b.lng]);
             }
             return;
         }
         const pts = rides[i].map((s) => [s.lat, s.lng]);
         if (pts.length < 2) return;
-        // A dark outline and a thick line in the route colour: stands out from the faded map
-        L.polyline(pts, { ...planStyle, color: '#24312b', weight: 13, opacity: 0.9, lineJoin: 'round' }).addTo(planLayer);
-        L.polyline(pts, { ...planStyle, color: l.color, weight: 8, lineJoin: 'round' }).addTo(planLayer);
+        // A white edge, then the route colour on top: clean against the faded map
+        L.polyline(pts, { ...planStyle, className: 'plan-edge', color: '#ffffff', weight: 11, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(planLayer);
+        L.polyline(pts, { ...planStyle, color: l.color, weight: 6, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(planLayer);
         for (const [k, s] of rides[i].entries()) {
             const end = k === 0 || k === rides[i].length - 1;
-            L.circleMarker([s.lat, s.lng], { pane: 'plan', renderer: planRenderer, radius: end ? 7 : 3.5, weight: end ? 3 : 2, color: '#24312b', fillColor: '#fffaf3', fillOpacity: 1 })
+            if (!end) continue; // stops in between are in the list; on the map they only add noise
+            L.circleMarker([s.lat, s.lng], { pane: 'plan', renderer: planRenderer, radius: 6, weight: 3, color: l.color, fillColor: '#ffffff', fillOpacity: 1 })
                 .bindTooltip(escapeHtml(s.name)).addTo(planLayer);
-            if (end) {
-                L.tooltip({ permanent: true, direction: 'right', offset: [10, 0], className: 'station-label', pane: 'tooltipPane' })
-                    .setLatLng([s.lat, s.lng]).setContent(escapeHtml(s.name.replace(/ (station|ferry terminal)$/, ''))).addTo(planLayer);
-            }
+            L.tooltip({ permanent: true, direction: 'right', offset: [8, 0], className: 'plan-label', pane: 'tooltipPane' })
+                .setLatLng([s.lat, s.lng]).setContent(escapeHtml(s.name.replace(/ (station|ferry terminal)$/, ''))).addTo(planLayer);
         }
         all.push(...pts);
     });
@@ -1054,7 +1099,7 @@ async function loadBoard() {
             <li class="${d.status === 'cancelled' ? 'cancelled' : ''}${d.tripId === state.selected ? ' selected' : ''}" data-trip="${escapeHtml(d.tripId)}" tabindex="0" role="button" aria-label="${escapeHtml(`${d.scheduled} ${d.routeShort ?? ''} to ${d.headsign}: show stops`)}">
               <span class="time">${d.expected ? `<small>${escapeHtml(d.scheduled)}</small>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</span>
               <span class="dest"><span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${d.mode && d.mode !== 'train' ? `<b class="route-no">${escapeHtml(d.routeShort)}</b> ` : ''}${escapeHtml(d.headsign)}</span>
-                ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${d.minutesAway} min` : ''}</span>` : ''}</span>
+                ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${mins(d.minutesAway)}` : ''}</span>` : ''}</span>
               <span class="right">${statusHtml(d.status, d.statusText)}${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
             </li>`).join('');
         staggerOnce(board);
@@ -1207,7 +1252,7 @@ async function loadStats() {
             <li><span class="bar-label"><i class="line-dot" style="--c:${escapeHtml(l.color)}"></i>${escapeHtml(l.name)}</span>
               <span class="bar"><i class="${pctClass(l.onTimePercent)}" style="width:${l.onTimePercent}%"></i></span>
               <b>${l.onTimePercent}%</b></li>`).join('')}</ul>
-          <p class="hint">Late ones on ${escapeHtml(s.lines.slice(-1)[0].name)}, the least reliable line, were about ${s.lines.slice(-1)[0].avgLateMinutes} min late</p>
+          <p class="hint">Late ones on ${escapeHtml(s.lines.slice(-1)[0].name)}, the least reliable line, were about ${mins(s.lines.slice(-1)[0].avgLateMinutes)} late</p>
 
           <h3 class="stats-h">By time of day</h3>
           <p class="hint">When the trip was due to start</p>
@@ -1218,7 +1263,7 @@ async function loadStats() {
           <h3 class="stats-h">Often late</h3>
           ${s.worst.length ? `<ol class="worst">${s.worst.map((w) => `
             <li><span class="to" style="--c:${escapeHtml(w.color)}">${escapeHtml(w.time)} ${escapeHtml(w.origin)} to ${escapeHtml(w.headsign)}</span>
-              <span class="quiet">about ${w.avgLateMinutes} min late · ${w.runs} runs</span></li>`).join('')}</ol>`
+              <span class="quiet">about ${mins(w.avgLateMinutes)} late · ${w.runs} runs</span></li>`).join('')}</ol>`
             : '<p class="empty">Each departure needs at least 2 recorded runs before it shows here. Check back in a day or two.</p>'}`;
     } catch (err) {
         box.innerHTML = '<p class="empty">The numbers aren’t loading right now. Try again in a minute.</p>';

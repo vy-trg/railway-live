@@ -221,6 +221,9 @@ export function describeJourney(journey, stops, patterns, trips, updates) {
       delaySec: dep.delay,
       status: cancelled ? 'cancelled' : delayLevel(dep.delay),
       statusText: cancelled ? 'Cancelled' : dep.delay === null ? 'Scheduled' : describeDelay(dep.delay),
+      // Live data for this vehicle at all? TransLink only predicts a trip shortly before and while it runs
+      live: Boolean(tu),
+      arriveDelaySec: arr.delay ?? dep.delay,
       stops: l.stopCount,
       change, // null for the first vehicle; 'make' | 'tight' | 'miss' after a change
     });
@@ -238,6 +241,9 @@ export function describeJourney(journey, stops, patterns, trips, updates) {
     arrive: formatClock(journey.arriveSecs),
     arriveSecs: journey.arriveSecs,
     arriveExpected: Math.abs(arriveExpectedSecs - journey.arriveSecs) >= 60 ? formatClock(arriveExpectedSecs) : null,
+    arriveExpectedSecs,
+    lateBySec: arriveExpectedSecs - journey.arriveSecs,
+    live: rides.some((r) => r.live),
     minutes: leaveSecs === null ? 0 : Math.round((journey.arriveSecs - leaveSecs) / 60),
     changes: Math.max(0, rides.length - 1),
     risky: rides.some((r) => r.change === 'miss' || r.status === 'cancelled') ? 'miss' : rides.some((r) => r.change === 'tight') ? 'tight' : null,

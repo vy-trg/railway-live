@@ -87,10 +87,25 @@ test('describeJourney: on time, the change is Make it (3 min spare)', () => {
 
 test('describeJourney: a 4-minute late train turns the change into a Miss', () => {
   const d = describeJourney(journey, stops, patterns, trips, new Map([['T', update(240)]]));
-  assert.equal(d.legs[0].statusText, '4 min late');
+  assert.equal(d.legs[0].statusText, '4 mins late');
   assert.equal(d.legs[0].arriveExpected, '7:34 am');
   assert.equal(d.legs[2].change, 'miss');
   assert.equal(d.risky, 'miss');
+  assert.equal(d.live, true);
+  assert.equal(d.legs[0].live, true);
+  assert.equal(d.legs[2].live, false);
+});
+
+test('describeJourney: arriving late is worked out from the last vehicle', () => {
+  const d = describeJourney(journey, stops, patterns, trips, new Map([['M', update(120)]]));
+  assert.equal(d.lateBySec, 120);
+  assert.equal(d.arriveExpected, '7:52 am');
+});
+
+test('describeJourney: no live data at all says so', () => {
+  const d = describeJourney(journey, stops, patterns, trips, new Map());
+  assert.equal(d.live, false);
+  assert.equal(d.lateBySec, 0);
 });
 
 test('describeJourney: a 2-minute late train makes it Tight', () => {

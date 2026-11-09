@@ -1,6 +1,6 @@
 // Joins realtime data (where trains are, how late they are) with the timetable
 // (route names, stations, scheduled times). Pure functions, so they are unit-tested.
-import { delayAtStop, delayLevel, describeDelay, formatClock } from './schedule.js';
+import { delayAtStop, delayLevel, describeDelay, formatClock, UNLIKELY_DELAY_SEC } from './schedule.js';
 
 // The next stop a train hasn't left yet, with its delay
 // `known` (optional): stop ids passengers use. The tram feed also lists turnbacks and
@@ -40,9 +40,10 @@ export function enrichTrains(vehicles, tripUpdates, trips, stopNames, nowSec, kn
 }
 
 // The numbers across the top: trains running, share on time, average delay of late trains,
-// and the route that is furthest behind right now. Only trains with delay info count.
+// and the route that is furthest behind right now. Only trains with delay info count,
+// and delays over 2 hours (usually a data problem) are left out so one can't skew the average.
 export function summarize(trains) {
-    const known = trains.filter((t) => t.delaySec !== null);
+    const known = trains.filter((t) => t.delaySec !== null && t.delaySec <= UNLIKELY_DELAY_SEC);
     const late = known.filter((t) => t.delaySec > 60);
     const byRoute = new Map();
     for (const t of known) {

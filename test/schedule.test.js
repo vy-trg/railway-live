@@ -17,9 +17,10 @@ test('GTFS dates become ISO dates', () => {
 test('delays read like a departure board', () => {
     assert.equal(describeDelay(0), 'On time');
     assert.equal(describeDelay(29), 'On time');
-    assert.equal(describeDelay(185), '3 min late');
+    assert.equal(describeDelay(185), '3 mins late');
     assert.equal(describeDelay(-70), '1 min early');
     assert.equal(describeDelay(null), 'No delay info yet');
+    assert.equal(describeDelay(19200), '320 mins late (check alerts)');
 });
 
 test('delay levels: on time up to 1 min, late up to 5, then very late', () => {
