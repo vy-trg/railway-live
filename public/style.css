@@ -556,3 +556,8 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .switch input:checked + .switch-track { background: var(--gum); border-color: var(--gum); }
 .switch input:checked + .switch-track::after { transform: translateX(16px); }
 .switch input:focus-visible + .switch-track { outline: 2px solid var(--gum); outline-offset: 2px; }
+
+/* Walk / Bike / Car to the first stop */
+.access { display: grid; gap: 4px; margin-top: 6px; }
+.access small { font-size: 0.75rem; }
+.leg.walk.bike .d, .leg.walk.car .d { color: var(--ink); font-weight: 700; }

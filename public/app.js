@@ -875,6 +875,26 @@ $('plan-chips').addEventListener('click', (e) => {
     if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
 });
 
+// How you get to the first stop (Near me or a place only); remembered on this device
+const ACCESS_HINT = {
+    walk: 'Walk: stops within 800 m.',
+    bike: 'Bike or scooter: stops within 3 km, at 15 km/h, plus a minute to lock up. Changes and the end are on foot.',
+    car: 'Car (park & ride or drop-off): stations within 10 km, at 30 km/h, plus 3 mins to park. No traffic, and check parking. Changes and the end are on foot.',
+};
+let access = 'walk';
+function setAccess(value, replan) {
+    access = ACCESS_HINT[value] ? value : 'walk';
+    for (const b of $('access-seg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.access === access));
+    $('access-hint').textContent = ACCESS_HINT[access] + (plan.from?.id && !plan.from.id.startsWith('landmark:') && access !== 'walk' ? ' Only changes anything when From is Near me or a place.' : '');
+    try { localStorage.setItem('access', access); } catch { /* fine without */ }
+    if (replan && $('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
+}
+try { setAccess(localStorage.getItem('access') || 'walk', false); } catch { setAccess('walk', false); }
+$('access-seg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-access]');
+    if (b) setAccess(b.dataset.access, true);
+});
+
 // More time to change: remembered on this device only, and re-plans straight away
 try { $('plan-more-time').checked = localStorage.getItem('moreTime') === '1'; } catch { /* storage blocked: off */ }
 $('plan-more-time').addEventListener('change', (e) => {
@@ -915,7 +935,8 @@ async function findJourneys() {
     $('plan-to').value = plan.to.name;
 
     const when = $('plan-when').value;
-    const at = (when ? `&at=${encodeURIComponent(when)}` : '') + ($('plan-more-time').checked ? '&moreTime=1' : '');
+    const at = (when ? `&at=${encodeURIComponent(when)}` : '') + ($('plan-more-time').checked ? '&moreTime=1' : '')
+        + (access !== 'walk' ? `&access=${access}` : '');
     const go = $('plan-go');
     const list = $('plan-results');
     go.disabled = true;
@@ -944,6 +965,7 @@ async function findJourneys() {
     }
 }
 
+const MOVE_VERB = { walk: 'Walk', bike: 'Ride', car: 'Drive' };
 const CHANGE_TEXT = { make: 'Make it', tight: 'Tight change', miss: 'Likely to miss' };
 const legName = (l) => (l.mode === 'train' ? l.routeName.replace(/ line$/i, '') || 'Train' : `${l.mode === 'bus' ? 'Bus' : l.mode === 'tram' ? 'Tram' : 'Ferry'} ${l.routeShort}`);
 const placeName = (p, fallback) => escapeHtml((p?.name ?? fallback).replace(/ (station|ferry terminal)$/, ''));
@@ -1008,7 +1030,9 @@ function legsHtml(j) {
     return j.legs.map((l, i) => {
         if (l.kind === 'walk') {
             const to = l.to ? `to ${placeName(l.to)}` : `to ${placeName(plan.to, 'where you’re going')}`;
-            return `<li class="leg walk" data-leg="${i}"><span class="t"></span><span class="d" data-to="${to}">Walk about ${mins(l.minutes)} ${to}</span></li>`;
+            const verb = MOVE_VERB[l.mode] ?? 'Walk';
+            const extra = l.mode === 'car' ? ' (check parking)' : '';
+            return `<li class="leg walk ${l.mode ?? 'walk'}" data-leg="${i}"><span class="t"></span><span class="d" data-to="${to}" data-verb="${verb}" data-extra="${extra}">${verb} about ${mins(l.minutes)} ${to}${extra}</span></li>`;
         }
         const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
         const status = l.status === 'cancelled' || l.live ? statusHtml(l.status, l.statusText) : '<span class="muted">Timetable (no live data yet)</span>';
@@ -1043,10 +1067,10 @@ $('plan-results').addEventListener('click', (e) => {
 
 // Walking path along real streets, from the server (which caches it). null -> keep the straight line.
 const walkCache = new Map();
-function streetWalk(a, b) {
-    const key = `${a.lat.toFixed(4)},${a.lng.toFixed(4)};${b.lat.toFixed(4)},${b.lng.toFixed(4)}`;
+function streetWalk(a, b, mode = 'walk') {
+    const key = `${mode}:${a.lat.toFixed(4)},${a.lng.toFixed(4)};${b.lat.toFixed(4)},${b.lng.toFixed(4)}`;
     if (!walkCache.has(key)) {
-        walkCache.set(key, fetch(`/api/walk?from=${a.lat.toFixed(5)},${a.lng.toFixed(5)}&to=${b.lat.toFixed(5)},${b.lng.toFixed(5)}`)
+        walkCache.set(key, fetch(`/api/walk?from=${a.lat.toFixed(5)},${a.lng.toFixed(5)}&to=${b.lat.toFixed(5)},${b.lng.toFixed(5)}&mode=${mode}`)
             .then((r) => (r.status === 200 ? r.json() : null))
             .catch(() => null));
     }
@@ -1078,13 +1102,15 @@ async function drawPlan(j) {
                 // Straight line first (faint), then the real path along streets when it arrives
                 const straight = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#3d4a43', weight: 3, opacity: 0.45, dashArray: '2 7', lineCap: 'round' }).addTo(planLayer);
                 all.push([a.lat, a.lng], [b.lat, b.lng]);
-                streetWalk(a, b).then((route) => {
+                streetWalk(a, b, l.mode ?? 'walk').then((route) => {
                     if (!route || planShown !== j) return;
                     planLayer.removeLayer(straight);
                     L.polyline(route.points, { ...planStyle, color: '#ffffff', weight: 7, lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
-                    L.polyline(route.points, { ...planStyle, color: '#3d4a43', weight: 4, dashArray: '0.1 8', lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
+                    // Walk: dots. Bike or scooter: dashes. Car: a solid grey line
+                    const dash = { walk: '0.1 8', bike: '8 6', car: null }[l.mode ?? 'walk'];
+                    L.polyline(route.points, { ...planStyle, color: '#3d4a43', weight: 4, dashArray: dash, lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
                     const row = document.querySelector(`.trip-card[aria-expanded="true"] .leg.walk[data-leg="${i}"] .d`);
-                    if (row) row.textContent = `Walk ${mins(Math.max(1, Math.round(route.secs / 60)))} (${route.metres < 1000 ? `${route.metres} m` : `${(route.metres / 1000).toFixed(1)} km`}) ${row.dataset.to}`;
+                    if (row) row.textContent = `${row.dataset.verb} ${mins(Math.max(1, Math.round(route.secs / 60)))} (${route.metres < 1000 ? `${route.metres} m` : `${(route.metres / 1000).toFixed(1)} km`}) ${row.dataset.to}${row.dataset.extra}`;
                 });
             }
             return;

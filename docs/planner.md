@@ -56,6 +56,18 @@ The browser's own date picker has no "Done" button and lets you pick a time that
 
 If nothing runs any more that day, the planner shows the first journeys the next morning and says so.
 
+## Getting to the first stop: walk, bike or scooter, car
+
+With *Near me* or a place as From, you can choose how you get to the first stop:
+
+| | Stops it looks at | Speed | Extra |
+|---|---|---|---|
+| Walk (default) | any stop within 800 m | 4.5 km/h | |
+| Bike / scooter | any stop within 3 km | 15 km/h | 1 min to lock up |
+| Car (park & ride or drop-off) | train, tram, ferry and busway stations within 10 km | 30 km/h | 3 mins to park |
+
+Distances get +20% for streets. The planner then picks the best stop: riding 8 minutes to a train station can beat walking 3 minutes to a slow bus. On the map the first leg follows streets with OSRM's bike or car router. Only the start changes: every change and the end are on foot, and the bike or scooter is left at the station. There is no parking data in TransLink's open data, and the car time ignores traffic, so the page says *check parking*.
+
 ## What it doesn't do (on purpose, for now)
 
 - **Addresses.** From and To are stations or stops; there is no address search, because that needs an outside geocoding service and an API key. "Near me" uses the phone's location instead, once, and doesn't save it.

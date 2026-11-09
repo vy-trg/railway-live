@@ -119,3 +119,36 @@ test('describeJourney: a cancelled vehicle is flagged', () => {
   assert.equal(d.legs[2].status, 'cancelled');
   assert.equal(d.risky, 'miss');
 });
+
+// ---------- Getting to the first stop: walk, bike or car ----------
+import { ACCESS } from '../planner.js';
+
+const spread = [
+  { id: 'near', stationId: '1001', name: 'Bus stop 300 m', lat: -27.6000, lng: 152.9030, modes: 'bus' },
+  { id: 'mid', stationId: 'place_x', name: 'Busway 2 km', lat: -27.6000, lng: 152.9200, modes: 'bus' },
+  { id: 'far', stationId: 'place_y', name: 'Train station 6 km', lat: -27.6000, lng: 152.9610, modes: 'train' },
+];
+const me = { lat: -27.6000, lng: 152.9000 };
+
+test('walk: only stops within 800 m', () => {
+  assert.deepEqual(placeToStops(me, spread, new Map()).map((o) => o.stop), [0]);
+});
+
+test('bike or scooter: stops within 3 km, faster than walking, plus a minute to lock up', () => {
+  const bike = placeToStops(me, spread, new Map(), 800, 'bike');
+  assert.deepEqual(bike.map((o) => o.stop), [0, 1]);
+  const walk = placeToStops(me, spread, new Map())[0].walk;
+  assert.ok(bike[0].walk < walk);
+  assert.ok(bike[0].walk >= ACCESS.bike.extraSecs);
+});
+
+test('car: stations within 10 km, never a kerbside bus stop, with 3 minutes to park', () => {
+  const car = placeToStops(me, spread, new Map(), 800, 'car');
+  assert.deepEqual(car.map((o) => o.stop), [1, 2]);
+  assert.ok(car.every((o) => o.walk >= 180));
+});
+
+test('leaving from a station: how you get there doesn\'t matter', () => {
+  const byStation = new Map([['place_y', [2]]]);
+  assert.deepEqual(placeToStops({ stationId: 'place_y' }, spread, byStation, 800, 'car'), [{ stop: 2, walk: 0 }]);
+});

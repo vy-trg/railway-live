@@ -180,7 +180,8 @@ app.get('/api/walk', handle(async (req, res) => {
     const to = latLng(req.query.to);
     if (!from || !to) return res.status(400).json({ error: 'from and to must be lat,lng in South East Queensland' });
     try {
-        const route = await walkRoute(from, to, { distanceM });
+        const mode = ['bike', 'car'].includes(req.query.mode) ? req.query.mode : 'walk';
+        const route = await walkRoute(from, to, { distanceM, mode });
         if (!route) return res.status(204).end();
         res.set('Cache-Control', 'public, max-age=86400').json(route);
     } catch (err) {
@@ -232,7 +233,9 @@ app.get('/api/plan', handle(async (req, res) => {
     }
 
     // ?moreTime=1: at least 5 spare minutes at every change
-    const options = { extraChangeSecs: req.query.moreTime === '1' ? EXTRA_CHANGE_SECS : 0 };
+    // ?access=bike|car: how you get to the first stop (only when leaving from a position or place)
+    const access = ['bike', 'car'].includes(req.query.access) ? req.query.access : 'walk';
+    const options = { extraChangeSecs: req.query.moreTime === '1' ? EXTRA_CHANGE_SECS : 0, access };
     let result = await plan(from, to, date, secs, 5, options);
     // Nothing more tonight: show the first journeys tomorrow morning instead of nothing
     let nextDay = false;
@@ -244,7 +247,7 @@ app.get('/api/plan', handle(async (req, res) => {
         result = await plan(from, to, date, secs, 5, options);
         nextDay = true;
     }
-    if (result.error === 'from') return res.json({ journeys: [], note: 'No stop within 800 m of where you are' });
+    if (result.error === 'from') return res.json({ journeys: [], note: access === 'walk' ? 'No stop within 800 m of where you are' : `No ${access === 'car' ? 'station' : 'stop'} within ${access === 'car' ? '10 km' : '3 km'} of where you are` });
     if (result.error === 'to') return res.json({ journeys: [], note: 'No stop within 800 m of where you are going' });
 
     const tripIds = [...new Set(result.journeys.flatMap((j) => j.legs.filter((l) => l.kind === 'ride').map((l) => l.tripId)))];

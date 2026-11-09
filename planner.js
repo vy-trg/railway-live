@@ -2,7 +2,7 @@
 // with raptor.js. The network (stops, patterns, walks) is loaded once; each date's trips are
 // loaded the first time someone plans on that date and kept for the next requests.
 import * as db from './db/queries.js';
-import { buildStopPatterns, planJourneys, distanceM, walkSecs } from './raptor.js';
+import { buildStopPatterns, planJourneys, distanceM, walkSecs, DETOUR } from './raptor.js';
 import { classify } from './connection.js';
 import { delayAtStop, describeDelay, delayLevel, formatClock } from './schedule.js';
 
@@ -91,7 +91,7 @@ export function getNetwork() {
     networkPromise = (async () => {
       const [stopRows, patternRows] = await Promise.all([db.getPlannerStops(), db.getPatternStops()]);
       const stops = stopRows.map((r) => ({
-        id: r.stop_id, stationId: r.station_id, name: r.name, platform: r.platform, lat: r.lat, lng: r.lng,
+        id: r.stop_id, stationId: r.station_id, name: r.name, platform: r.platform, lat: r.lat, lng: r.lng, modes: r.modes ?? '',
       }));
       const stopIndex = new Map(stops.map((s, i) => [s.id, i]));
       const patterns = buildPatternList(patternRows, stopIndex);
@@ -134,23 +134,42 @@ async function getTrips(date) {
 
 // Pure: where you are -> the stops you could start from, with the walk to each.
 // place: { stationId } or { lat, lng }
-export function placeToStops(place, stops, byStation, maxM = MAX_ACCESS_M) {
+// How you get to the first stop. Only the start: changes and the end are always on foot.
+// Speeds are averages with 20% added for streets; car adds 3 minutes to park or be dropped off.
+export const ACCESS = {
+  walk: { maxM: MAX_ACCESS_M, mps: 4.5 / 3.6, extraSecs: 0 },
+  bike: { maxM: 3000, mps: 15 / 3.6, extraSecs: 60 }, // a minute to lock the bike or scooter
+  car: { maxM: 10000, mps: 30 / 3.6, extraSecs: 180 },
+};
+
+// Car: only stations (train, tram, ferry, busway), where there is somewhere to stop.
+// Kerbside bus stops have nowhere to park, so they're left out.
+const carFriendly = (s) => s.modes.split(',').some((m) => m && m !== 'bus') || s.stationId.startsWith('place_');
+
+// Pure: where you are -> the stops you could start from, with the time to get to each.
+// place: { stationId } or { lat, lng }; mode: walk | bike | car (only matters for a position)
+export function placeToStops(place, stops, byStation, maxM = MAX_ACCESS_M, mode = 'walk') {
   if (place.stationId) {
     return (byStation.get(place.stationId) || []).map((i) => ({ stop: i, walk: 0 }));
   }
+  const a = ACCESS[mode] ?? ACCESS.walk;
+  const limit = mode === 'walk' ? maxM : a.maxM;
   const out = [];
   stops.forEach((s, i) => {
+    if (mode === 'car' && !carFriendly(s)) return;
     const m = distanceM(place.lat, place.lng, s.lat, s.lng);
-    if (m <= maxM) out.push({ stop: i, walk: walkSecs(m) });
+    if (m > limit) return;
+    const secs = mode === 'walk' ? walkSecs(m) : Math.round((m * DETOUR) / a.mps) + a.extraSecs;
+    out.push({ stop: i, walk: secs });
   });
   return out;
 }
 
 // from/to: { stationId } or { lat, lng }; date "YYYY-MM-DD"; secs = seconds after midnight
-export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 0 } = {}) {
+export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 0, access = 'walk' } = {}) {
   const net = await getNetwork();
   const trips = await getTrips(date);
-  const origin = placeToStops(from, net.stops, net.byStation);
+  const origin = placeToStops(from, net.stops, net.byStation, MAX_ACCESS_M, access);
   const dest = placeToStops(to, net.stops, net.byStation);
   if (origin.length === 0) return { error: 'from', journeys: [] };
   if (dest.length === 0) return { error: 'to', journeys: [] };
@@ -163,7 +182,8 @@ export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 
     journeys: journeys.map((j) => {
       const first = j.legs[0];
       const walk = first ? startWalk.get(first.fromStop) ?? 0 : 0;
-      const legs = walk > 0 ? [{ kind: 'walk', fromStop: null, toStop: first.fromStop, secs: walk }, ...j.legs] : j.legs;
+      const how = from.stationId ? 'walk' : access;
+      const legs = walk > 0 ? [{ kind: 'walk', mode: how, fromStop: null, toStop: first.fromStop, secs: walk }, ...j.legs] : j.legs;
       return { ...j, legs };
     }),
     stops: net.stops,
@@ -185,7 +205,7 @@ export function describeJourney(journey, stops, patterns, trips, updates) {
   let sameStop = false; // changing at the same stop: a minute to get off and on, as in raptor.js
   for (const l of journey.legs) {
     if (l.kind === 'walk') {
-      legs.push({ kind: 'walk', minutes: Math.max(1, Math.round(l.secs / 60)), from: stopOut(l.fromStop), to: stopOut(l.toStop) });
+      legs.push({ kind: 'walk', mode: l.mode ?? 'walk', minutes: Math.max(1, Math.round(l.secs / 60)), from: stopOut(l.fromStop), to: stopOut(l.toStop) });
       if (readyAt !== null) readyAt += l.secs;
       sameStop = false;
       continue;
