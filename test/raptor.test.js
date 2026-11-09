@@ -109,3 +109,17 @@ test('distance and walking time', () => {
   assert.equal(walkSecs(125), 120); // 125 m * 1.2 / 1.25 m/s
   assert.equal(walkSecs(5), 30);
 });
+
+test('more time to change: skips a connection with less spare time than asked for', () => {
+  // T700 reaches C at 7:20. X725 leaves 5 min later: fine normally, too close with 6 min wanted
+  const normal = raptor(network, trips, [{ stop: 0, secs: t(6, 55) }], new Map([[3, 0]]));
+  assert.deepEqual(rides(normal[normal.length - 1]), ['T700', 'X725']);
+  const relaxed = raptor(network, trips, [{ stop: 0, secs: t(6, 55) }], new Map([[3, 0]]), 5, 6 * 60);
+  const last = relaxed[relaxed.length - 1];
+  assert.notDeepEqual(rides(last), ['T700', 'X725']);
+});
+
+test('more time to change does not delay the first vehicle', () => {
+  const [j] = raptor(network, trips, [{ stop: 0, secs: t(6, 59) }], new Map([[2, 0]]), 5, 10 * 60);
+  assert.deepEqual(rides(j), ['T700']);
+});

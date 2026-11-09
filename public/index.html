@@ -136,6 +136,11 @@
                         <button type="button" data-when="60">+1 hr</button>
                         <button type="button" data-when="tomorrow">Tomorrow 7 am</button>
                     </div>
+                    <label class="switch">
+                        <input id="plan-more-time" type="checkbox">
+                        <span class="switch-track" aria-hidden="true"></span>
+                        <span>Give me more time to change <small>At least 5 mins at every change. May arrive a little later.</small></span>
+                    </label>
                     <p id="plan-error" class="field-error" role="alert" hidden></p>
                     <button id="plan-go" type="submit" class="primary-btn">Find journeys</button>
                 </form>
@@ -205,10 +210,9 @@
                 <ul id="alerts" class="alerts" aria-busy="true"><li class="skeleton-row tall" aria-hidden="true"></li><li class="skeleton-row tall" aria-hidden="true"></li><li class="skeleton-row tall" aria-hidden="true"></li></ul>
             </section>
 
+            <!-- Map and data credits are on the map itself; this only links the code -->
             <footer class="foot">
-                Data: <a href="https://translink.com.au/about-translink/open-data">TransLink</a> (CC BY 4.0) ·
-                Map © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ·
-                <a href="https://github.com/vy-trg/railway-live">Source</a>
+                <a href="https://github.com/vy-trg/railway-live">Source code on GitHub</a>
             </footer>
         </aside>
     </div>

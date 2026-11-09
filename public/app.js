@@ -108,10 +108,41 @@ const SEQ_BOUNDS = L.latLngBounds([-28.6, 151.6], [-25.9, 154.0]);
 const map = L.map('map', { preferCanvas: true, zoomControl: false, maxBounds: SEQ_BOUNDS, maxBoundsViscosity: 0.6, minZoom: 8 })
     .setView([-27.5, 152.98], 10);
 L.control.zoom({ position: 'topleft' }).addTo(map);
+// The map credits stay on the map (OpenStreetMap asks for that); the page footer only links the code.
+// A plain "Leaflet" link instead of the flag keeps the line short enough for one line on a phone.
+map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
+
+// Full screen map: a button under the zoom. iPhone Safari has no full screen for a part of a page,
+// so the map box is pinned over the whole screen instead, and Esc or the button closes it.
+const FullMap = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+        const btn = L.DomUtil.create('button', 'full-btn');
+        btn.type = 'button';
+        btn.setAttribute('aria-pressed', 'false');
+        btn.setAttribute('aria-label', 'Full screen map');
+        btn.innerHTML = '<span aria-hidden="true">⤢</span>';
+        L.DomEvent.disableClickPropagation(btn);
+        L.DomEvent.on(btn, 'click', () => setFullMap(btn.getAttribute('aria-pressed') !== 'true'));
+        return btn;
+    },
+});
+const fullBtn = new FullMap().addTo(map).getContainer();
+function setFullMap(on) {
+    document.body.classList.toggle('map-full', on);
+    fullBtn.setAttribute('aria-pressed', String(on));
+    fullBtn.setAttribute('aria-label', on ? 'Close full screen map' : 'Full screen map');
+    fullBtn.innerHTML = `<span aria-hidden="true">${on ? '×' : '⤢'}</span>`;
+    // Leaflet has to measure the new size, after the browser has applied it
+    requestAnimationFrame(() => map.invalidateSize());
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.body.classList.contains('map-full')) setFullMap(false);
+});
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        + ' · <a href="https://translink.com.au/about-translink/open-data">TransLink</a> (CC BY 4.0)',
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        + ' · <a href="https://translink.com.au/about-translink/open-data">TransLink</a> CC BY 4.0',
 }).addTo(map);
 
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -844,6 +875,13 @@ $('plan-chips').addEventListener('click', (e) => {
     if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
 });
 
+// More time to change: remembered on this device only, and re-plans straight away
+try { $('plan-more-time').checked = localStorage.getItem('moreTime') === '1'; } catch { /* storage blocked: off */ }
+$('plan-more-time').addEventListener('change', (e) => {
+    try { localStorage.setItem('moreTime', e.target.checked ? '1' : '0'); } catch { /* fine without */ }
+    if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
+});
+
 $('plan-form').addEventListener('submit', (e) => {
     e.preventDefault();
     findJourneys();
@@ -877,7 +915,7 @@ async function findJourneys() {
     $('plan-to').value = plan.to.name;
 
     const when = $('plan-when').value;
-    const at = when ? `&at=${encodeURIComponent(when)}` : '';
+    const at = (when ? `&at=${encodeURIComponent(when)}` : '') + ($('plan-more-time').checked ? '&moreTime=1' : '');
     const go = $('plan-go');
     const list = $('plan-results');
     go.disabled = true;
@@ -967,9 +1005,10 @@ function renderJourneys(res) {
 }
 
 function legsHtml(j) {
-    return j.legs.map((l) => {
+    return j.legs.map((l, i) => {
         if (l.kind === 'walk') {
-            return `<li class="leg walk"><span class="t"></span><span class="d">Walk about ${mins(l.minutes)}${l.to ? ` to ${placeName(l.to)}` : ` to ${placeName(plan.to, 'where you’re going')}`}</span></li>`;
+            const to = l.to ? `to ${placeName(l.to)}` : `to ${placeName(plan.to, 'where you’re going')}`;
+            return `<li class="leg walk" data-leg="${i}"><span class="t"></span><span class="d" data-to="${to}">Walk about ${mins(l.minutes)} ${to}</span></li>`;
         }
         const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
         const status = l.status === 'cancelled' || l.live ? statusHtml(l.status, l.statusText) : '<span class="muted">Timetable (no live data yet)</span>';
@@ -1002,7 +1041,19 @@ $('plan-results').addEventListener('click', (e) => {
     openPlanJourney(Number(card.dataset.i));
 });
 
-// Each ride's real stops come from the trip; walks are straight dotted lines
+// Walking path along real streets, from the server (which caches it). null -> keep the straight line.
+const walkCache = new Map();
+function streetWalk(a, b) {
+    const key = `${a.lat.toFixed(4)},${a.lng.toFixed(4)};${b.lat.toFixed(4)},${b.lng.toFixed(4)}`;
+    if (!walkCache.has(key)) {
+        walkCache.set(key, fetch(`/api/walk?from=${a.lat.toFixed(5)},${a.lng.toFixed(5)}&to=${b.lat.toFixed(5)},${b.lng.toFixed(5)}`)
+            .then((r) => (r.status === 200 ? r.json() : null))
+            .catch(() => null));
+    }
+    return walkCache.get(key);
+}
+
+// Each ride's real stops come from the trip; walks follow streets when the walking router answers
 async function drawPlan(j) {
     planShown = j;
     planLayer.clearLayers();
@@ -1024,8 +1075,17 @@ async function drawPlan(j) {
             const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? placeOf(plan.from);
             const b = l.to ?? placeOf(plan.to);
             if (a?.lat != null && b?.lat != null) {
-                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#3d4a43', weight: 4, dashArray: '0.1 8', lineCap: 'round' }).addTo(planLayer);
+                // Straight line first (faint), then the real path along streets when it arrives
+                const straight = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#3d4a43', weight: 3, opacity: 0.45, dashArray: '2 7', lineCap: 'round' }).addTo(planLayer);
                 all.push([a.lat, a.lng], [b.lat, b.lng]);
+                streetWalk(a, b).then((route) => {
+                    if (!route || planShown !== j) return;
+                    planLayer.removeLayer(straight);
+                    L.polyline(route.points, { ...planStyle, color: '#ffffff', weight: 7, lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
+                    L.polyline(route.points, { ...planStyle, color: '#3d4a43', weight: 4, dashArray: '0.1 8', lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
+                    const row = document.querySelector(`.trip-card[aria-expanded="true"] .leg.walk[data-leg="${i}"] .d`);
+                    if (row) row.textContent = `Walk ${mins(Math.max(1, Math.round(route.secs / 60)))} (${route.metres < 1000 ? `${route.metres} m` : `${(route.metres / 1000).toFixed(1)} km`}) ${row.dataset.to}`;
+                });
             }
             return;
         }

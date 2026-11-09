@@ -147,7 +147,7 @@ export function placeToStops(place, stops, byStation, maxM = MAX_ACCESS_M) {
 }
 
 // from/to: { stationId } or { lat, lng }; date "YYYY-MM-DD"; secs = seconds after midnight
-export async function plan(from, to, date, secs, count = 5) {
+export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 0 } = {}) {
   const net = await getNetwork();
   const trips = await getTrips(date);
   const origin = placeToStops(from, net.stops, net.byStation);
@@ -157,7 +157,7 @@ export async function plan(from, to, date, secs, count = 5) {
   const sources = origin.map((o) => ({ stop: o.stop, secs: secs + o.walk }));
   const targets = new Map(dest.map((d) => [d.stop, d.walk]));
   const startWalk = new Map(origin.map((o) => [o.stop, o.walk]));
-  const journeys = planJourneys(net.network, trips, sources, targets, { count });
+  const journeys = planJourneys(net.network, trips, sources, targets, { count, extraChangeSecs });
   // Put the walk to the first stop back in, so the journey reads from where you are
   return {
     journeys: journeys.map((j) => {

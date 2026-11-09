@@ -39,6 +39,7 @@ To give several options, the planner runs again leaving a minute after the first
 | Walk between nearby stops | up to 400 m, 4.5 km/h, +20% for streets, at least 2 min | Straight lines are shorter than real paths |
 | "Near me" and walking at the end | stops within 800 m | About 10 minutes' walk |
 | Changes | up to 4 (5 vehicles) | More is rarely useful |
+| Give me more time to change (switch) | at least 5 mins at every change, on top of the walk | Fewer tight changes; may arrive a little later |
 | Make it / Tight / Miss | `connection.js`: 3+ min spare / 0–3 / less | Same rule as the train + bus feature |
 
 ## On the map
@@ -58,6 +59,6 @@ If nothing runs any more that day, the planner shows the first journeys the next
 ## What it doesn't do (on purpose, for now)
 
 - **Addresses.** From and To are stations or stops; there is no address search, because that needs an outside geocoding service and an API key. "Near me" uses the phone's location instead, once, and doesn't save it.
-- **Walks are estimates.** TransLink's open data has almost no walking links between stops, so walks are straight-line estimates. Real stairs, lifts and crossings can be slower.
+- **Walk times in the search are estimates.** TransLink's open data has almost no walking links between stops, so the search uses straight-line distance +20%. On the map, each walk is then drawn along real streets and paths from the free OSRM foot router on OpenStreetMap (routing.openstreetmap.de, run by FOSSGIS), with its real distance and time. If the router doesn't answer, the faint straight line stays.
 - **Live delays don't change the route search.** Journeys are found on the timetable; live delays are then shown on each vehicle and used for Make it / Tight / Miss. Planning around live delays is the next step.
 - **No fares, accessibility or "fewest walks" options** yet.

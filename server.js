@@ -8,6 +8,8 @@ import { brisbaneClock, parseLocalTime, formatClock } from './schedule.js';
 import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
 import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX } from './landmarks.js';
+import { walkRoute } from './walk.js';
+import { distanceM, EXTRA_CHANGE_SECS } from './raptor.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
@@ -167,6 +169,26 @@ app.get('/api/stations', handle(async (req, res) => {
     res.json([...places, ...matches.slice(0, 20 - places.length).map(({ s }) => out(s))]);
 }));
 
+// Walking directions along streets for one walk of a journey: ?from=-27.62,152.91&to=-27.63,152.92
+// 204 when there's no street route (the page keeps its straight dotted line).
+const latLng = (text) => {
+    const [lat, lng] = String(text ?? '').split(',').map(Number);
+    return lat < -25 && lat > -29 && lng > 151 && lng < 154 ? { lat, lng } : null;
+};
+app.get('/api/walk', handle(async (req, res) => {
+    const from = latLng(req.query.from);
+    const to = latLng(req.query.to);
+    if (!from || !to) return res.status(400).json({ error: 'from and to must be lat,lng in South East Queensland' });
+    try {
+        const route = await walkRoute(from, to, { distanceM });
+        if (!route) return res.status(204).end();
+        res.set('Cache-Control', 'public, max-age=86400').json(route);
+    } catch (err) {
+        console.error('Walking route failed:', err.message);
+        res.status(204).end();
+    }
+}));
+
 // Journey planner: from a station or stop (or a position, "near me") to another, leaving at a time.
 // ?from=place_spcsta or ?fromLat=-27.6&fromLng=152.9, the same for to, and optional ?at=2026-11-10T07:30
 const placeFrom = (q, prefix, stationIds, landmarks) => {
@@ -209,7 +231,9 @@ app.get('/api/plan', handle(async (req, res) => {
         ({ date, secs } = brisbaneClock(now));
     }
 
-    let result = await plan(from, to, date, secs);
+    // ?moreTime=1: at least 5 spare minutes at every change
+    const options = { extraChangeSecs: req.query.moreTime === '1' ? EXTRA_CHANGE_SECS : 0 };
+    let result = await plan(from, to, date, secs, 5, options);
     // Nothing more tonight: show the first journeys tomorrow morning instead of nothing
     let nextDay = false;
     if (!result.error && result.journeys.length === 0) {
@@ -217,7 +241,7 @@ app.get('/api/plan', handle(async (req, res) => {
         d.setUTCDate(d.getUTCDate() + 1);
         date = d.toISOString().slice(0, 10);
         secs = 3 * 3600;
-        result = await plan(from, to, date, secs);
+        result = await plan(from, to, date, secs, 5, options);
         nextDay = true;
     }
     if (result.error === 'from') return res.json({ journeys: [], note: 'No stop within 800 m of where you are' });
