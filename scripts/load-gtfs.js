@@ -42,7 +42,7 @@ const client = await pool.connect();
 try {
   await client.query(fs.readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8'));
   await client.query('BEGIN');
-  await client.query('TRUNCATE route_shapes, pattern_stops, trips, stops, stations, routes, calendar, calendar_dates CASCADE');
+  await client.query('TRUNCATE trip_shapes, route_shapes, pattern_stops, trips, stops, stations, routes, calendar, calendar_dates CASCADE');
 
   const routes = [];
   for await (const r of rows('routes.txt')) {
@@ -55,9 +55,11 @@ try {
   const trips = [];
   const serviceIds = new Set();
   const shapeRoute = new Map(); // shape_id -> route_id
+  const tripShape = new Map(); // trip_id -> shape_id
   for await (const t of rows('trips.txt')) {
     if (!routeIds.has(t.route_id)) continue;
     if (t.shape_id) shapeRoute.set(t.shape_id, t.route_id);
+    tripShape.set(t.trip_id, t.shape_id || null);
     trips.push([t.trip_id, t.route_id, t.service_id, t.trip_headsign, t.direction_id === '' ? null : Number(t.direction_id)]);
     serviceIds.add(t.service_id);
   }
@@ -83,7 +85,7 @@ try {
   byTrip.clear();
   // A trip whose every stop was a turnback has no pattern; it can't be boarded, so it isn't kept
   const boardable = trips.filter((t) => tripPattern.has(t[0]));
-  for (const t of boardable) t.push(...tripPattern.get(t[0]));
+  for (const t of boardable) t.push(...tripPattern.get(t[0]), tripShape.get(t[0]));
 
   // Keep only the platforms and wharves these services use, and the stations those platforms belong to
   const allStops = new Map();
@@ -124,6 +126,15 @@ try {
     const routeId = shapeRoute.get(shapeId);
     if (!longest.has(routeId) || pts.length > longest.get(routeId).length) longest.set(routeId, pts);
   }
+  // Every shape, for drawing one ride exactly (only shapes that a loaded trip uses)
+  const usedShapes = new Set(trips.map((t) => tripShape.get(t[0])).filter(Boolean));
+  const tripShapes = [...shapePoints]
+    .filter(([shapeId]) => usedShapes.has(shapeId))
+    .map(([shapeId, pts]) => {
+      const line = [...pts].sort((a, b) => a[0] - b[0]).map(([, lat, lng]) => [lat, lng]);
+      const coords = simplify(line, 0.0001).map(([lat, lng]) => [Math.round(lat * 1e5) / 1e5, Math.round(lng * 1e5) / 1e5]);
+      return [shapeId, JSON.stringify(coords)];
+    });
   const routeShapes = [...longest].map(([routeId, pts]) => {
     const line = pts.sort((a, b) => a[0] - b[0]).map(([, lat, lng]) => [lat, lng]);
     const coords = simplify(line, 0.0001).map(([lat, lng]) => [Math.round(lat * 1e5) / 1e5, Math.round(lng * 1e5) / 1e5]);
@@ -149,7 +160,8 @@ try {
   await insertMany(client, 'routes', ['route_id', 'short_name', 'long_name', 'color', 'text_color', 'mode'], ['text', 'text', 'text', 'text', 'text', 'text'], routes);
   await insertMany(client, 'stations', ['station_id', 'name', 'lat', 'lng', 'modes'], ['text', 'text', 'float8', 'float8', 'text'], stations);
   await insertMany(client, 'stops', ['stop_id', 'station_id', 'name', 'platform'], ['text', 'text', 'text', 'text'], stops);
-  await insertMany(client, 'trips', ['trip_id', 'route_id', 'service_id', 'headsign', 'direction_id', 'pattern_id', 'start_secs'], ['text', 'text', 'text', 'text', 'int2', 'int4', 'int4'], boardable);
+  await insertMany(client, 'trips', ['trip_id', 'route_id', 'service_id', 'headsign', 'direction_id', 'pattern_id', 'start_secs', 'shape_id'], ['text', 'text', 'text', 'text', 'int2', 'int4', 'int4', 'text'], boardable);
+  await insertMany(client, 'trip_shapes', ['shape_id', 'coords'], ['text', 'jsonb'], tripShapes);
   await insertMany(client, 'pattern_stops', ['pattern_id', 'stop_sequence', 'stop_id', 'arr_offset', 'dep_offset', 'is_last'], ['int4', 'int4', 'text', 'int4', 'int4', 'bool'], patternStops);
   // Postgres can't UNNEST an array of arrays into one boolean[] column, so calendar goes row by row (a few hundred rows)
   for (const c of calendar) {

@@ -94,7 +94,16 @@
                             <button id="plan-near" type="button" class="chip-btn" aria-describedby="plan-near-hint">Near me</button>
                         </div>
                         <datalist id="plan-from-list"></datalist>
-                        <small id="plan-near-hint" class="muted">Uses your location once, to find stops within 800 m. It isn’t saved.</small>
+                        <small id="plan-near-hint" class="muted">Uses your location once, to find stops nearby. It isn’t saved.</small>
+                        <div class="access" role="group" aria-labelledby="access-label">
+                            <span id="access-label" class="field-label">Getting to the first stop</span>
+                            <div class="seg" id="access-seg">
+                                <button type="button" data-access="walk" aria-pressed="true">Walk</button>
+                                <button type="button" data-access="bike" aria-pressed="false">Bike / scooter</button>
+                                <button type="button" data-access="car" aria-pressed="false">Car</button>
+                            </div>
+                            <small id="access-hint" class="muted">Walk: stops within 800 m.</small>
+                        </div>
                     </div>
                     <div class="plan-place">
                         <label class="field-label" for="plan-to">To</label>

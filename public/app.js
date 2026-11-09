@@ -781,7 +781,7 @@ setInterval(() => whenPickers.forEach((p) => p.refresh()), 60000);
 // ---------- Plan: from A to B, with changes ----------
 // The planned journey gets its own layer above everything, and the rest of the map fades,
 // so its line can't be confused with the other lines of the same colour
-map.createPane('plan').style.zIndex = 650;
+map.createPane('plan').style.zIndex = 640; // under the labels (tooltips are 650)
 const planRenderer = L.svg({ pane: 'plan' });
 const planLayer = L.layerGroup().addTo(map);
 const planStyle = { pane: 'plan', renderer: planRenderer, interactive: false };
@@ -883,6 +883,26 @@ $('plan-chips').addEventListener('click', (e) => {
     if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
 });
 
+// How you get to the first stop (Near me or a place only); remembered on this device
+const ACCESS_HINT = {
+    walk: 'Walk: stops within 800 m.',
+    bike: 'Bike or scooter: stops within 3 km, at 15 km/h, plus a minute to lock up. Changes and the end are on foot.',
+    car: 'Car (park & ride or drop-off): stations within 10 km, at 30 km/h, plus 3 mins to park. No traffic, and check parking. Changes and the end are on foot.',
+};
+let access = 'walk';
+function setAccess(value, replan) {
+    access = ACCESS_HINT[value] ? value : 'walk';
+    for (const b of $('access-seg').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.access === access));
+    $('access-hint').textContent = ACCESS_HINT[access] + (plan.from?.id && !plan.from.id.startsWith('landmark:') && access !== 'walk' ? ' Only changes anything when From is Near me or a place.' : '');
+    try { localStorage.setItem('access', access); } catch { /* fine without */ }
+    if (replan && $('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
+}
+try { setAccess(localStorage.getItem('access') || 'walk', false); } catch { setAccess('walk', false); }
+$('access-seg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-access]');
+    if (b) setAccess(b.dataset.access, true);
+});
+
 // More time to change: remembered on this device only, and re-plans straight away
 try { $('plan-more-time').checked = localStorage.getItem('moreTime') === '1'; } catch { /* storage blocked: off */ }
 $('plan-more-time').addEventListener('change', (e) => {
@@ -923,7 +943,8 @@ async function findJourneys() {
     $('plan-to').value = plan.to.name;
 
     const when = $('plan-when').value;
-    const at = (when ? `&at=${encodeURIComponent(when)}` : '') + ($('plan-more-time').checked ? '&moreTime=1' : '');
+    const at = (when ? `&at=${encodeURIComponent(when)}` : '') + ($('plan-more-time').checked ? '&moreTime=1' : '')
+        + (access !== 'walk' ? `&access=${access}` : '');
     const go = $('plan-go');
     const list = $('plan-results');
     go.disabled = true;
@@ -952,6 +973,7 @@ async function findJourneys() {
     }
 }
 
+const MOVE_VERB = { walk: 'Walk', bike: 'Ride', car: 'Drive' };
 const CHANGE_TEXT = { make: 'Make it', tight: 'Tight change', miss: 'Likely to miss' };
 const legName = (l) => (l.mode === 'train' ? l.routeName.replace(/ line$/i, '') || 'Train' : `${l.mode === 'bus' ? 'Bus' : l.mode === 'tram' ? 'Tram' : 'Ferry'} ${l.routeShort}`);
 const placeName = (p, fallback) => escapeHtml((p?.name ?? fallback).replace(/ (station|ferry terminal)$/, ''));
@@ -1015,8 +1037,19 @@ function renderJourneys(res) {
 function legsHtml(j) {
     return j.legs.map((l, i) => {
         if (l.kind === 'walk') {
+            if (l.platformChange) {
+                // Train to train: "Change platforms". Bus to train (same station): "Walk to platform 1"
+                const before = j.legs[i - 1];
+                const after = j.legs[i + 1];
+                const trains = before?.mode === 'train' && after?.mode === 'train';
+                const where = l.to?.platform ? `platform ${escapeHtml(l.to.platform)}` : placeName(l.to);
+                const text = trains ? `Change platforms${l.to?.platform ? ` to platform ${escapeHtml(l.to.platform)}` : ''}` : `Walk to ${where}`;
+                return `<li class="leg walk" data-leg="${i}"><span class="t"></span><span class="d">${text} (about ${mins(l.minutes)})</span></li>`;
+            }
             const to = l.to ? `to ${placeName(l.to)}` : `to ${placeName(plan.to, 'where you’re going')}`;
-            return `<li class="leg walk" data-leg="${i}"><span class="t"></span><span class="d" data-to="${to}">Walk about ${mins(l.minutes)} ${to}</span></li>`;
+            const verb = MOVE_VERB[l.mode] ?? 'Walk';
+            const extra = l.mode === 'car' ? ' (check parking)' : '';
+            return `<li class="leg walk ${l.mode ?? 'walk'}" data-leg="${i}"><span class="t"></span><span class="d" data-to="${to}" data-verb="${verb}" data-extra="${extra}">${verb} about ${mins(l.minutes)} ${to}${extra}</span></li>`;
         }
         const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
         const status = l.status === 'cancelled' || l.live ? statusHtml(l.status, l.statusText) : '<span class="muted">Timetable (no live data yet)</span>';
@@ -1051,10 +1084,10 @@ $('plan-results').addEventListener('click', (e) => {
 
 // Walking path along real streets, from the server (which caches it). null -> keep the straight line.
 const walkCache = new Map();
-function streetWalk(a, b) {
-    const key = `${a.lat.toFixed(4)},${a.lng.toFixed(4)};${b.lat.toFixed(4)},${b.lng.toFixed(4)}`;
+function streetWalk(a, b, mode = 'walk') {
+    const key = `${mode}:${a.lat.toFixed(4)},${a.lng.toFixed(4)};${b.lat.toFixed(4)},${b.lng.toFixed(4)}`;
     if (!walkCache.has(key)) {
-        walkCache.set(key, fetch(`/api/walk?from=${a.lat.toFixed(5)},${a.lng.toFixed(5)}&to=${b.lat.toFixed(5)},${b.lng.toFixed(5)}`)
+        walkCache.set(key, fetch(`/api/walk?from=${a.lat.toFixed(5)},${a.lng.toFixed(5)}&to=${b.lat.toFixed(5)},${b.lng.toFixed(5)}&mode=${mode}`)
             .then((r) => (r.status === 200 ? r.json() : null))
             .catch(() => null));
     }
@@ -1067,44 +1100,47 @@ async function drawPlan(j) {
     planLayer.clearLayers();
     journeyLayer.clearLayers();
     const all = [];
-    const rides = await Promise.all(j.legs.map(async (l) => {
-        if (l.kind !== 'ride') return null;
-        try {
-            const trip = await getJson(`/api/trips/${encodeURIComponent(l.tripId)}`);
-            return trip.stops.filter((s) => s.sequence >= l.fromSeq && s.sequence <= l.toSeq && s.lat !== null);
-        } catch {
-            return [l.from, l.to].filter((s) => s?.lat != null);
-        }
-    }));
-    if (planShown !== j) return; // another journey was picked meanwhile
+    // [lat, lng] of names already on the map; "You" counts, so the first stop next to you isn't named on top of it
+    const labelled = [plan.from, plan.to].filter((p) => p?.lat !== undefined && p.name === 'Near me').map((p) => [p.lat, p.lng]);
     j.legs.forEach((l, i) => {
         if (l.kind === 'walk') {
             const placeOf = (p) => (!p ? null : p.lat !== undefined ? p : stations.find((s) => s.id === p.id));
             const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? placeOf(plan.from);
             const b = l.to ?? placeOf(plan.to);
-            if (a?.lat != null && b?.lat != null) {
+            // A platform change inside one station has nothing to draw
+            if (!l.platformChange && a?.lat != null && b?.lat != null) {
                 // Straight line first (faint), then the real path along streets when it arrives
                 const straight = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#3d4a43', weight: 3, opacity: 0.45, dashArray: '2 7', lineCap: 'round' }).addTo(planLayer);
                 all.push([a.lat, a.lng], [b.lat, b.lng]);
-                streetWalk(a, b).then((route) => {
+                streetWalk(a, b, l.mode ?? 'walk').then((route) => {
                     if (!route || planShown !== j) return;
                     planLayer.removeLayer(straight);
                     L.polyline(route.points, { ...planStyle, color: '#ffffff', weight: 7, lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
-                    L.polyline(route.points, { ...planStyle, color: '#3d4a43', weight: 4, dashArray: '0.1 8', lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
+                    // Walk: dots. Bike or scooter: dashes. Car: a solid grey line
+                    const dash = { walk: '0.1 8', bike: '8 6', car: null }[l.mode ?? 'walk'];
+                    L.polyline(route.points, { ...planStyle, color: '#3d4a43', weight: 4, dashArray: dash, lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
                     const row = document.querySelector(`.trip-card[aria-expanded="true"] .leg.walk[data-leg="${i}"] .d`);
-                    if (row) row.textContent = `Walk ${mins(Math.max(1, Math.round(route.secs / 60)))} (${route.metres < 1000 ? `${route.metres} m` : `${(route.metres / 1000).toFixed(1)} km`}) ${row.dataset.to}`;
+                    if (row && route.metres >= 40) row.textContent = `${row.dataset.verb} ${mins(Math.max(1, Math.round(route.secs / 60)))} (${route.metres < 1000 ? `${route.metres} m` : `${(route.metres / 1000).toFixed(1)} km`}) ${row.dataset.to}${row.dataset.extra}`;
                 });
             }
             return;
         }
-        const pts = rides[i].map((s) => [s.lat, s.lng]);
+        // The server sends each ride's path along its real track or road (see planner.js)
+        const pts = l.path ?? [l.from, l.to].filter((s) => s?.lat != null).map((s) => [s.lat, s.lng]);
         if (pts.length < 2) return;
         // A white edge, then the route colour on top: clean against the faded map
         L.polyline(pts, { ...planStyle, className: 'plan-edge', color: '#ffffff', weight: 11, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(planLayer);
         L.polyline(pts, { ...planStyle, color: l.color, weight: 6, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(planLayer);
-        for (const [k, s] of rides[i].entries()) {
-            const end = k === 0 || k === rides[i].length - 1;
-            if (!end) continue; // stops in between are in the list; on the map they only add noise
+        // Only where you get on and off: stops in between are in the list and only add noise here
+        for (const s of [l.from, l.to].filter((x) => x?.lat != null)) {
+            // One label per place: a change between two stops close together gets one name, not two on top of each other
+            const near = labelled.some(([la, ln]) => Math.abs(la - s.lat) < 0.003 && Math.abs(ln - s.lng) < 0.003);
+            if (near) {
+                L.circleMarker([s.lat, s.lng], { pane: 'plan', renderer: planRenderer, radius: 6, weight: 3, color: l.color, fillColor: '#ffffff', fillOpacity: 1 })
+                    .bindTooltip(escapeHtml(s.name)).addTo(planLayer);
+                continue;
+            }
+            labelled.push([s.lat, s.lng]);
             L.circleMarker([s.lat, s.lng], { pane: 'plan', renderer: planRenderer, radius: 6, weight: 3, color: l.color, fillColor: '#ffffff', fillOpacity: 1 })
                 .bindTooltip(escapeHtml(s.name)).addTo(planLayer);
             L.tooltip({ permanent: true, direction: 'right', offset: [8, 0], className: 'plan-label', pane: 'tooltipPane' })

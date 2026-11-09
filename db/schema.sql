@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS trips (
 ALTER TABLE trips ADD COLUMN IF NOT EXISTS pattern_id INT;
 ALTER TABLE trips ADD COLUMN IF NOT EXISTS start_secs INT;   -- departure from its first stop
 CREATE INDEX IF NOT EXISTS trips_pattern_start_idx ON trips (pattern_id, start_secs);
+-- The exact track each trip follows (trip_shapes), so a planned journey is drawn on its real road or rails
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS shape_id TEXT;
 
 CREATE TABLE IF NOT EXISTS pattern_stops (
   pattern_id    INT  NOT NULL,
@@ -90,6 +92,13 @@ CREATE TABLE IF NOT EXISTS calendar_dates (
 -- One simplified track shape per route, for drawing coloured lines on the map
 CREATE TABLE IF NOT EXISTS route_shapes (
   route_id TEXT PRIMARY KEY REFERENCES routes(route_id) ON DELETE CASCADE,
+  coords   JSONB NOT NULL               -- [[lat, lng], ...]
+);
+
+-- Every track shape of the timetable, simplified to about 10 m (a route can have several:
+-- each direction and each variant). Used to draw one ride of a planned journey exactly.
+CREATE TABLE IF NOT EXISTS trip_shapes (
+  shape_id TEXT PRIMARY KEY,
   coords   JSONB NOT NULL               -- [[lat, lng], ...]
 );
 

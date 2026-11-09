@@ -123,3 +123,11 @@ test('more time to change does not delay the first vehicle', () => {
   const [j] = raptor(network, trips, [{ stop: 0, secs: t(6, 59) }], new Map([[2, 0]]), 5, 10 * 60);
   assert.deepEqual(rides(j), ['T700']);
 });
+
+test('startWalks false: no walking from the starting stops before the first vehicle', () => {
+  // From D, Y can only be reached by walking D -> E first; without start walks, no journey via E
+  const withWalk = raptor(network, trips, [{ stop: 3, secs: t(6, 0) }], new Map([[4, 0]]));
+  const without = raptor(network, trips, [{ stop: 3, secs: t(6, 0) }], new Map([[4, 0]]), 5, 0, false);
+  assert.equal(withWalk.length > 0, true);
+  assert.deepEqual(without, []);
+});

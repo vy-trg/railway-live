@@ -214,3 +214,14 @@ export async function getTripsOn(date) {
   );
   return rows;
 }
+
+// The exact track of each of these trips: trip_id -> [[lat, lng], ...] (trips without one are left out)
+export async function getTripShapes(tripIds) {
+  if (tripIds.length === 0) return new Map();
+  const { rows } = await pool.query(
+    `SELECT t.trip_id, s.coords FROM trips t JOIN trip_shapes s ON s.shape_id = t.shape_id
+     WHERE t.trip_id = ANY($1)`,
+    [tripIds]
+  );
+  return new Map(rows.map((r) => [r.trip_id, r.coords]));
+}

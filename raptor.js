@@ -39,7 +39,9 @@ function firstTripFrom(starts, depOffset, time) {
 // targets: Map(stopIdx -> secs of walking from that stop to where you're going)
 // Returns the best journey for each number of vehicles (fewer changes vs earlier arrival).
 // extraChangeSecs: spare time wanted at every change, on top of any walk (0 = catch the first one you can)
-export function raptor(network, trips, sources, targets, maxRounds = 5, extraChangeSecs = 0) {
+// startWalks: false when the sources already include the walk from where you are to every nearby stop,
+// so a journey never starts "walk to stop A, then walk to stop B"
+export function raptor(network, trips, sources, targets, maxRounds = 5, extraChangeSecs = 0, startWalks = true) {
   const n = network.stopCount;
   const INF = Infinity;
   const best = new Float64Array(n).fill(INF);
@@ -55,7 +57,7 @@ export function raptor(network, trips, sources, targets, maxRounds = 5, extraCha
       marked.add(stop);
     }
   }
-  relaxFootpaths(network, rounds[0], labels[0], best, marked, 0);
+  if (startWalks) relaxFootpaths(network, rounds[0], labels[0], best, marked, 0);
 
   let bestTarget = INF;
   const results = [];
@@ -191,13 +193,13 @@ function unwind(network, trips, labels, k, stop, egressSecs) {
 
 // Several journeys to choose from: plan, then plan again leaving just after the first vehicle
 // of the earliest option, until there are enough. Same trips twice are dropped.
-export function planJourneys(network, trips, sources, targets, { count = 5, maxRounds = 5, extraChangeSecs = 0 } = {}) {
+export function planJourneys(network, trips, sources, targets, { count = 5, maxRounds = 5, extraChangeSecs = 0, startWalks = true } = {}) {
   const found = [];
   const seen = new Set();
   let shift = 0;
   for (let run = 0; run < count * 2 && found.length < count; run += 1) {
     const shifted = sources.map((s) => ({ stop: s.stop, secs: s.secs + shift }));
-    const results = raptor(network, trips, shifted, targets, maxRounds, extraChangeSecs);
+    const results = raptor(network, trips, shifted, targets, maxRounds, extraChangeSecs, startWalks);
     if (results.length === 0) break;
     for (const r of results) {
       const key = r.legs.filter((l) => l.kind === 'ride').map((l) => l.tripId).join('>');

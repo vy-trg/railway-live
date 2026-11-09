@@ -45,3 +45,15 @@ test('walkRoute: the router failing is an error the server turns into "use the s
 test('nearby points share a cache entry', () => {
   assert.equal(walkKey({ lat: -27.620001, lng: 152.91 }, { lat: -27.63, lng: 152.92 }), walkKey({ lat: -27.620004, lng: 152.91 }, { lat: -27.63, lng: 152.92 }));
 });
+
+test('bike and car routes use their own router and speed, cached apart from walks', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(url); return { ok: true, json: async () => osrm }; };
+  const a = { lat: -27.7001, lng: 152.8001 };
+  const b = { lat: -27.7101, lng: 152.8101 };
+  const bike = await walkRoute(a, b, { fetchImpl, mode: 'bike' });
+  const car = await walkRoute(a, b, { fetchImpl, mode: 'car' });
+  assert.ok(urls[0].includes('routed-bike') && urls[1].includes('routed-car'));
+  assert.equal(bike.secs, Math.round(450 / (15 / 3.6)));
+  assert.ok(car.secs < bike.secs);
+});

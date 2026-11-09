@@ -119,3 +119,85 @@ test('describeJourney: a cancelled vehicle is flagged', () => {
   assert.equal(d.legs[2].status, 'cancelled');
   assert.equal(d.risky, 'miss');
 });
+
+// ---------- Getting to the first stop: walk, bike or car ----------
+import { ACCESS } from '../planner.js';
+
+const spread = [
+  { id: 'near', stationId: '1001', name: 'Bus stop 300 m', lat: -27.6000, lng: 152.9030, modes: 'bus' },
+  { id: 'mid', stationId: 'place_x', name: 'Busway 2 km', lat: -27.6000, lng: 152.9200, modes: 'bus' },
+  { id: 'far', stationId: 'place_y', name: 'Train station 6 km', lat: -27.6000, lng: 152.9610, modes: 'train' },
+];
+const me = { lat: -27.6000, lng: 152.9000 };
+
+test('walk: only stops within 800 m', () => {
+  assert.deepEqual(placeToStops(me, spread, new Map()).map((o) => o.stop), [0]);
+});
+
+test('bike or scooter: stops within 3 km, faster than walking, plus a minute to lock up', () => {
+  const bike = placeToStops(me, spread, new Map(), 800, 'bike');
+  assert.deepEqual(bike.map((o) => o.stop), [0, 1]);
+  const walk = placeToStops(me, spread, new Map())[0].walk;
+  assert.ok(bike[0].walk < walk);
+  assert.ok(bike[0].walk >= ACCESS.bike.extraSecs);
+});
+
+test('car: stations within 10 km, never a kerbside bus stop, with 3 minutes to park', () => {
+  const car = placeToStops(me, spread, new Map(), 800, 'car');
+  assert.deepEqual(car.map((o) => o.stop), [1, 2]);
+  assert.ok(car.every((o) => o.walk >= 180));
+});
+
+test('leaving from a station: how you get there doesn\'t matter', () => {
+  const byStation = new Map([['place_y', [2]]]);
+  assert.deepEqual(placeToStops({ stationId: 'place_y' }, spread, byStation, 800, 'car'), [{ stop: 2, walk: 0 }]);
+});
+
+// ---------- Tidy legs: nothing that reads as nonsense ----------
+import { tidyLegs } from '../planner.js';
+
+const st = [
+  { stationId: 'A' }, { stationId: 'A' }, { stationId: 'B' }, { stationId: 'C' },
+];
+const ride = (from, to) => ({ kind: 'ride', fromStop: from, toStop: to });
+
+test('two walks in a row become one walk', () => {
+  const legs = tidyLegs([{ kind: 'walk', fromStop: null, toStop: 2, secs: 720 }, { kind: 'walk', fromStop: 2, toStop: 3, secs: 360 }, ride(3, 0)], st);
+  assert.equal(legs.length, 2);
+  assert.deepEqual([legs[0].toStop, legs[0].secs], [3, 1080]);
+});
+
+test('a few seconds of walking at the end (place on the stop itself) is dropped', () => {
+  const legs = tidyLegs([ride(2, 3), { kind: 'walk', fromStop: 3, toStop: null, secs: 30 }], st);
+  assert.equal(legs.length, 1);
+});
+
+test('a real walk at the end stays', () => {
+  assert.equal(tidyLegs([ride(2, 3), { kind: 'walk', fromStop: 3, toStop: null, secs: 300 }], st).length, 2);
+});
+
+test('walking between platforms of one station is a platform change', () => {
+  const legs = tidyLegs([ride(2, 0), { kind: 'walk', fromStop: 0, toStop: 1, secs: 120 }, ride(1, 3)], st);
+  assert.equal(legs[1].platformChange, true);
+});
+
+// ---------- Get on at the nearest stop ----------
+import { nearestBoarding } from '../planner.js';
+
+test('the first bus is boarded at the closest stop you can reach in time, not an earlier one on its route', () => {
+  // Bus stops at 0, 1, 2, 3 (2 minutes apart) and you live next to stop 2
+  const pattern = { stops: [10, 11, 12, 13], dep: [0, 120, 240, 360], arr: [0, 120, 240, 360], last: [false, false, false, true] };
+  const leg = { kind: 'ride', pattern: 0, fromPos: 0, toPos: 3, fromStop: 10, departSecs: 1000, stopCount: 3 };
+  const walks = new Map([[10, 720], [11, 500], [12, 180]]);
+  const moved = nearestBoarding(leg, pattern, walks, 200);
+  assert.equal(moved.fromStop, 12);
+  assert.equal(moved.departSecs, 1240);
+  assert.equal(moved.stopCount, 1);
+});
+
+test('the nearest stop is skipped when you can\'t get there before the bus', () => {
+  const pattern = { stops: [10, 11], dep: [0, 60], arr: [0, 60], last: [false, true] };
+  const leg = { kind: 'ride', fromPos: 0, toPos: 1, fromStop: 10, departSecs: 1000, stopCount: 1 };
+  // stop 10 is 12 minutes away and the bus leaves it at 1000: leaving at 200, 920 is in time
+  assert.equal(nearestBoarding(leg, pattern, new Map([[10, 720]]), 200).fromStop, 10);
+});
