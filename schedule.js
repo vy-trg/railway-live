@@ -20,7 +20,18 @@ export function describeDelay(seconds) {
   // Under a minute either way counts as on time, matching delayLevel and the colours
   if (Math.abs(seconds) < 60) return 'On time';
   const minutes = Math.round(Math.abs(seconds) / 60);
-  return seconds > 0 ? `${minutes} min late` : `${minutes} min early`;
+  // TransLink sometimes reports hours of delay for a train that has really stopped or been replaced.
+  // Show the number, but say it may not be right, instead of hiding it.
+  if (seconds > UNLIKELY_DELAY_SEC) return `${formatMins(minutes)} late (check alerts)`;
+  return seconds > 0 ? `${formatMins(minutes)} late` : `${formatMins(minutes)} early`;
+}
+
+// More than 2 hours late is unusual enough to say so, and it is left out of averages
+export const UNLIKELY_DELAY_SEC = 2 * 3600;
+
+// 1 -> "1 min", 4 -> "4 mins"
+export function formatMins(n) {
+  return `${n} min${n === 1 ? '' : 's'}`;
 }
 
 // Delay bucket used for colours: on time (<= 1 min), late (2-5), very late (> 5)

@@ -62,11 +62,13 @@ const state = {
     place: params.get('place') || '', // free-text place, e.g. 'Springfield'
     mode: ['train', 'tram', 'ferry', 'bus'].includes(params.get('mode')) ? params.get('mode') : '', // '' = all
     station: params.get('station') || DEFAULT_STATION,
-    tab: ['trains', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
+    tab: ['trains', 'plan', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
     at: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(params.get('at') ?? '') ? params.get('at') : '', // planned time, '' = now
     selected: null, // trip id of the train whose journey is open
 };
-let statsDays = 7; // period on the Stats tab
+let statsDays = 1; // period on the Stats tab: today first
+// "1 min", "4 mins"
+const mins = (n) => `${n} min${n === 1 ? '' : 's'}`;
 function saveUrl() {
     const p = new URLSearchParams();
     if (state.mode) p.set('mode', state.mode);
@@ -79,19 +81,22 @@ function saveUrl() {
 }
 
 // ---------- Tabs ----------
-const TABS = ['trains', 'board', 'alerts', 'stats'];
+const TABS = ['trains', 'plan', 'board', 'alerts', 'stats'];
 function showTab(name) {
     state.tab = name;
     for (const t of TABS) {
         $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
         $(`view-${t}`).hidden = t !== name;
     }
-    // The highlight slides to the chosen tab (position 0 to 3)
+    // The highlight slides to the chosen tab (position 0 to 4)
     document.querySelector('.tabs').style.setProperty('--tab', TABS.indexOf(name));
     if (name === 'stats') loadStats();
     // The station pin belongs to the Departures tab
     if (name === 'board') showStationOnMap(stations.find((x) => x.id === state.station), false);
     else stationPin.clearLayers();
+    // The planned journey's line belongs to the Plan tab
+    if (name !== 'plan') { planLayer.clearLayers(); setPlanFocus(false); }
+    else if (planShown) drawPlan(planShown);
     saveUrl();
 }
 for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
@@ -346,7 +351,7 @@ async function checkReminder() {
         if (!stop || stop.state === 'passed' || stop.state === 'skipped') {
             reminder = null; // the train has gone past it (or won't stop): nothing left to remind
         } else if (stop.etaSec <= REMIND_BEFORE_SEC) {
-            const text = `${stop.name} in about ${Math.max(1, Math.round(stop.etaSec / 60))} min. Get ready to get off.`;
+            const text = `${stop.name} in about ${mins(Math.max(1, Math.round(stop.etaSec / 60)))}. Get ready to get off.`;
             showBanner(text, true);
             if ('Notification' in window && Notification.permission === 'granted') {
                 try { new Notification('Railway Live', { body: text }); } catch { /* some phones only allow this from a service worker */ }
@@ -473,7 +478,7 @@ function renderFeedStatus() {
     }
     if (!lastUpdated) return;
     const seconds = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
-    const age = seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)} min ago`;
+    const age = seconds < 60 ? `${seconds}s ago` : `${mins(Math.round(seconds / 60))} ago`;
     text.textContent = feedState === 'stale' ? `Feed down · data from ${age}` : `Live · ${age}`;
 }
 setInterval(renderFeedStatus, 5000);
@@ -511,7 +516,7 @@ function renderSummary(s) {
     const onTime = $('kpi-ontime');
     onTime.textContent = s.onTimePercent === null ? '–' : `${s.onTimePercent}%`;
     onTime.className = s.onTimePercent === null ? '' : s.onTimePercent >= 90 ? 'good' : s.onTimePercent >= 75 ? 'warn' : 'bad';
-    $('kpi-delay').textContent = `${Math.round(s.avgLateMinutes)} min`;
+    $('kpi-delay').textContent = mins(Math.round(s.avgLateMinutes));
     $('kpi-delay-wrap').hidden = !s.avgLateMinutes;
 }
 
@@ -607,7 +612,7 @@ $('station-input').addEventListener('input', (e) => {
     if (q.length < 2) return;
     stationSearch = setTimeout(async () => {
         try {
-            const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}`);
+            const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}&places=1`);
             for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
             $('station-list').innerHTML = found.concat(stations.filter((s) => !found.includes(s)).slice(0, 300))
                 .map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
@@ -648,22 +653,421 @@ function pickStation(text) {
     loadBoard();
 }
 
+// ---------- Day and time picker with a Done button ----------
+// The hidden input keeps "YYYY-MM-DDTHH:MM" in Brisbane time, or "" for now.
+// Done checks the time hasn't passed, saves it, closes, and calls onDone.
+const pad2 = (n) => String(n).padStart(2, '0');
+function brisbaneDateAfter(days) {
+    return new Date(Date.now() + 10 * 3600 * 1000 + days * 86400 * 1000).toISOString().slice(0, 10);
+}
+function describeAt(value) {
+    if (!value) return 'Now';
+    const [date, time] = value.split('T');
+    const [h, m] = time.split(':').map(Number);
+    const clock = `${h % 12 === 0 ? 12 : h % 12}:${pad2(m)} ${h < 12 ? 'am' : 'pm'}`;
+    if (date === brisbaneDateAfter(0)) return `Today, ${clock}`;
+    if (date === brisbaneDateAfter(1)) return `Tomorrow, ${clock}`;
+    if (date === brisbaneDateAfter(-1)) return `Yesterday, ${clock}`;
+    const d = new Date(`${date}T00:00:00Z`);
+    return `${d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}, ${clock}`;
+}
+
+const whenPickers = [];
+function whenPicker(rootId, onDone) {
+    const root = $(rootId);
+    const btn = root.querySelector('.when-btn');
+    const input = root.querySelector('input[type="hidden"]');
+    const panel = root.querySelector('.when-panel');
+    const day = root.querySelector('.w-day');
+    const hour = root.querySelector('.w-hour');
+    const min = root.querySelector('.w-min');
+    const ampm = root.querySelector('.w-ampm');
+    const err = root.querySelector('.w-err');
+    hour.innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+    min.innerHTML = Array.from({ length: 12 }, (_, i) => `<option value="${i * 5}">${pad2(i * 5)}</option>`).join('');
+    const setAmpm = (v) => ampm.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ampm === v)));
+    ampm.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setAmpm(b.dataset.ampm); });
+
+    const refresh = () => { root.querySelector('.when-text').textContent = describeAt(input.value); };
+    const open = () => {
+        // 3 days back (timetable only) to 7 days ahead
+        day.innerHTML = Array.from({ length: 11 }, (_, k) => {
+            const i = k - 3;
+            const date = brisbaneDateAfter(i);
+            const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : i === -1 ? 'Yesterday' : new Date(`${date}T00:00:00Z`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+            return `<option value="${date}">${label}</option>`;
+        }).join('');
+        // Start from the chosen time, or now rounded up to the next 5 minutes
+        let value = input.value;
+        if (!value) {
+            const t = Math.ceil((Date.now() + 10 * 3600 * 1000) / 300000) * 300000;
+            value = new Date(t).toISOString().slice(0, 16);
+        }
+        const [date, time] = value.split('T');
+        const [h, m] = time.split(':').map(Number);
+        day.value = date;
+        hour.value = String(h % 12 === 0 ? 12 : h % 12);
+        min.value = String(Math.floor(m / 5) * 5);
+        setAmpm(h < 12 ? 'am' : 'pm');
+        err.hidden = true;
+        panel.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+        day.focus();
+    };
+    const close = () => {
+        panel.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+    };
+    btn.addEventListener('click', () => (panel.hidden ? open() : close()));
+    root.querySelector('.w-cancel').addEventListener('click', () => { close(); btn.focus(); });
+    root.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) { close(); btn.focus(); } });
+    root.querySelector('.w-done').addEventListener('click', () => {
+        const pm = ampm.querySelector('[aria-pressed="true"]').dataset.ampm === 'pm';
+        const h12 = Number(hour.value) % 12;
+        const value = `${day.value}T${pad2(h12 + (pm ? 12 : 0))}:${pad2(Number(min.value))}`;
+        input.value = value;
+        refresh();
+        close();
+        btn.focus();
+        onDone(value);
+    });
+    const picker = { refresh, close };
+    whenPickers.push(picker);
+    refresh();
+    return picker;
+}
+// "Today" and "Tomorrow" labels move on at midnight
+setInterval(() => whenPickers.forEach((p) => p.refresh()), 60000);
+
+// ---------- Plan: from A to B, with changes ----------
+// The planned journey gets its own layer above everything, and the rest of the map fades,
+// so its line can't be confused with the other lines of the same colour
+map.createPane('plan').style.zIndex = 650;
+const planRenderer = L.svg({ pane: 'plan' });
+const planLayer = L.layerGroup().addTo(map);
+const planStyle = { pane: 'plan', renderer: planRenderer, interactive: false };
+function setPlanFocus(on) {
+    map.getContainer().classList.toggle('is-planning', on);
+}
+let planShown = null; // the journey drawn on the map
+const plan = { from: null, to: null, journeys: [] }; // from/to: { id, name } or { lat, lng, name }
+
+// Typing in From or To searches stations and stops, like the Departures box
+function stationSearchBox(inputId, listId) {
+    let timer = null;
+    $(inputId).addEventListener('input', (e) => {
+        clearTimeout(timer);
+        if (inputId === 'plan-from') $('plan-near').setAttribute('aria-pressed', 'false');
+        const q = e.target.value.trim();
+        if (q.length < 2) return;
+        timer = setTimeout(async () => {
+            try {
+                const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}&places=1`);
+                for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
+                $(listId).innerHTML = found.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
+            } catch (err) {
+                console.error('Station search failed:', err);
+            }
+        }, 250);
+    });
+}
+stationSearchBox('plan-from', 'plan-from-list');
+stationSearchBox('plan-to', 'plan-to-list');
+
+// The station or stop typed in a box. Names from the list match exactly; a short name like
+// "Griffith University" matches when only one place has it. Several matches -> ask to pick.
+function findStation(text) {
+    const full = text.trim().toLowerCase();
+    if (!full) return { match: null };
+    const exact = stations.find((s) => s.name.toLowerCase() === full);
+    if (exact) return { match: exact };
+    const base = (name) => name.toLowerCase().replace(/ \(.*\)$/, '').replace(/ station$/, '');
+    const typed = base(full);
+    const same = stations.filter((s) => base(s.name) === typed);
+    if (same.length === 1) return { match: same[0] };
+    if (same.length > 1) return { match: null, several: same.map((s) => s.name) };
+    const starts = typed.length >= 3 ? stations.filter((s) => base(s.name).startsWith(typed)) : [];
+    if (starts.length === 1) return { match: starts[0] };
+    return { match: null, several: starts.length > 1 ? starts.slice(0, 3).map((s) => s.name) : null };
+}
+
+$('plan-near').addEventListener('click', () => {
+    const btn = $('plan-near');
+    if (!navigator.geolocation) {
+        planError('This browser can’t share your location. Type a station or stop instead.');
+        return;
+    }
+    btn.textContent = 'Finding you…';
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            btn.textContent = 'Near me';
+            btn.setAttribute('aria-pressed', 'true');
+            plan.from = { lat: pos.coords.latitude, lng: pos.coords.longitude, name: 'Near me' };
+            $('plan-from').value = 'Near me';
+            $('plan-error').hidden = true;
+        },
+        () => {
+            btn.textContent = 'Near me';
+            planError('We couldn’t get your location. Allow location for this site, or type a station or stop.');
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+});
+
+$('plan-swap').addEventListener('click', () => {
+    const from = $('plan-from').value;
+    $('plan-from').value = $('plan-to').value;
+    $('plan-to').value = from;
+    [plan.from, plan.to] = [plan.to, plan.from];
+    $('plan-near').setAttribute('aria-pressed', String(plan.from?.lat !== undefined));
+    $('plan-error').hidden = true;
+    if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
+});
+
+function planError(text) {
+    $('plan-error').textContent = text;
+    $('plan-error').hidden = false;
+}
+
+const planPicker = whenPicker('plan-pick', () => {
+    if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
+});
+$('plan-chips').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-when]');
+    if (!btn) return;
+    const v = btn.dataset.when;
+    planPicker.close();
+    if (v === '0') $('plan-when').value = '';
+    else if (v === 'tomorrow') $('plan-when').value = `${brisbaneDateAfter(1)}T07:00`;
+    else $('plan-when').value = new Date(Date.now() + 10 * 3600 * 1000 + Number(v) * 60000).toISOString().slice(0, 16);
+    planPicker.refresh();
+    if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
+});
+
+$('plan-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    findJourneys();
+});
+
+const placeQuery = (prefix, p) => (p.lat !== undefined
+    ? `${prefix}Lat=${p.lat.toFixed(5)}&${prefix}Lng=${p.lng.toFixed(5)}`
+    : `${prefix}=${encodeURIComponent(p.id)}`);
+
+async function findJourneys() {
+    $('plan-error').hidden = true;
+    // Use what's typed now, unless From is "Near me"
+    const isNear = (p, id) => p?.lat !== undefined && $(id).value === 'Near me';
+    if (!isNear(plan.from, 'plan-from')) {
+        const f = findStation($('plan-from').value);
+        if (f.several) return planError(`More than one place matches From: ${f.several.join(', ')}. Pick one from the list.`);
+        plan.from = f.match ? { id: f.match.id, name: f.match.name } : null;
+    }
+    if (!isNear(plan.to, 'plan-to')) {
+        const t = findStation($('plan-to').value);
+        if (t.several) return planError(`More than one place matches To: ${t.several.join(', ')}. Pick one from the list.`);
+        plan.to = t.match ? { id: t.match.id, name: t.match.name } : null;
+    }
+    if (plan.from?.lat !== undefined && plan.to?.lat !== undefined && plan.from.name === 'Near me' && plan.to.name === 'Near me') {
+        return planError('From and To are both Near me. Pick a station or place for one of them.');
+    }
+    if (!plan.from) return planError('Pick where you’re leaving from: start typing and choose from the list, or press Near me.');
+    if (!plan.to) return planError('Pick where you’re going: start typing and choose a station or stop from the list.');
+    if (plan.from.id && plan.from.id === plan.to.id) return planError('From and To are the same place.');
+    $('plan-from').value = plan.from.name;
+    $('plan-to').value = plan.to.name;
+
+    const when = $('plan-when').value;
+    const at = when ? `&at=${encodeURIComponent(when)}` : '';
+    const go = $('plan-go');
+    const list = $('plan-results');
+    go.disabled = true;
+    go.textContent = 'Finding journeys…';
+    list.setAttribute('aria-busy', 'true');
+    try {
+        const res = await getJson(`/api/plan?${placeQuery('from', plan.from)}&${placeQuery('to', plan.to)}${at}`);
+        plan.journeys = res.journeys;
+        const n = `${res.journeys.length} ${res.journeys.length === 1 ? 'journey' : 'journeys'}`;
+        $('plan-note').textContent = res.note ?? (res.nextDay
+            ? `Nothing more today. ${n} tomorrow morning (timetable). Walks are estimates.`
+            : res.past ? `${n} leaving from ${res.at}. This time has passed, so these are timetable times with no live delays.`
+                : res.planned ? `${n} leaving from ${res.at}. Timetable times: TransLink shares delays only shortly before and during a trip, so check again closer to the time.`
+                    : `${n} leaving from ${res.at}. Delays are live where TransLink has them; trips that haven't started yet show timetable times. Walks are estimates.`);
+        renderJourneys(res);
+        if (res.journeys.length) openPlanJourney(0);
+        else { planLayer.clearLayers(); setPlanFocus(false); planShown = null; }
+    } catch (err) {
+        $('plan-note').textContent = '';
+        planError(err.message && !/^HTTP/.test(err.message) ? err.message : 'Journeys aren’t loading right now. Try again in a moment.');
+        console.error('Plan failed:', err);
+    } finally {
+        go.disabled = false;
+        go.textContent = 'Find journeys';
+        list.removeAttribute('aria-busy');
+    }
+}
+
+const CHANGE_TEXT = { make: 'Make it', tight: 'Tight change', miss: 'Likely to miss' };
+const legName = (l) => (l.mode === 'train' ? l.routeName.replace(/ line$/i, '') || 'Train' : `${l.mode === 'bus' ? 'Bus' : l.mode === 'tram' ? 'Tram' : 'Ferry'} ${l.routeShort}`);
+const placeName = (p, fallback) => escapeHtml((p?.name ?? fallback).replace(/ (station|ferry terminal)$/, ''));
+
+const lateText = (sec) => `${mins(Math.round(Math.abs(sec) / 60))} ${sec > 0 ? 'late' : 'early'}`;
+
+// Which journey to take right now: the earliest real arrival, skipping ones with a change
+// you're likely to miss or a cancelled vehicle. Only when planning for now (live delays known).
+function bestNow(journeys, live) {
+    if (!live) return -1;
+    let best = -1;
+    journeys.forEach((j, i) => {
+        if (j.risky === 'miss') return;
+        if (best === -1 || j.arriveExpectedSecs < journeys[best].arriveExpectedSecs) best = i;
+    });
+    return best;
+}
+
+// One line under the times saying what live data says about this journey
+function journeyStatus(j, isNow, best, i) {
+    const rides = j.legs.filter((l) => l.kind === 'ride');
+    const cancelled = rides.find((r) => r.status === 'cancelled');
+    if (cancelled) return `<span class="trip-flag miss">${escapeHtml(legName(cancelled))} is cancelled</span>`;
+    const missed = rides.find((r) => r.change === 'miss');
+    if (missed) {
+        const better = best !== -1 && best !== i ? plan.journeys[best] : null;
+        return `<span class="trip-flag miss">Likely to miss the ${escapeHtml(legName(missed))}${better ? `: take the ${escapeHtml(better.leave)} instead (arrives ${escapeHtml(better.arriveExpected ?? better.arrive)})` : ''}</span>`;
+    }
+    const parts = [];
+    if (j.lateBySec >= 60) parts.push(`<span class="trip-flag tight">Running ${lateText(j.lateBySec)}: arrives ${escapeHtml(j.arriveExpected)}</span>`);
+    else if (j.live) parts.push('<span class="trip-flag ok">On time so far</span>');
+    else if (isNow) parts.push('<span class="trip-flag none">No live data yet: timetable times</span>');
+    if (rides.some((r) => r.change === 'tight')) parts.push('<span class="trip-flag tight">Tight change</span>');
+    return parts.join('');
+}
+
+function renderJourneys(res) {
+    const list = $('plan-results');
+    const isNow = !res.planned && !res.nextDay;
+    const best = bestNow(plan.journeys, isNow && plan.journeys.some((j) => j.live));
+    list.innerHTML = plan.journeys.map((j, i) => {
+        const rides = j.legs.filter((l) => l.kind === 'ride');
+        const chain = rides.map((l) => {
+            const late = l.delaySec !== null && l.delaySec >= 60 ? `<i>+${Math.round(l.delaySec / 60)}</i>` : '';
+            return `<span class="badge" style="--c:${escapeHtml(l.color)};--t:${escapeHtml(l.textColor)}">${escapeHtml(l.mode === 'train' ? 'Train' : l.routeShort)}${late}</span>`;
+        }).join('<span class="sep" aria-hidden="true">›</span>');
+        const tag = i === best && plan.journeys.length > 1 ? '<span class="best-tag">Best right now</span>' : '';
+        return `<li class="trip-card${i === best ? ' best' : ''}" data-i="${i}" aria-expanded="false">
+          <button type="button" aria-label="${escapeHtml(`Leave ${j.leave}, arrive ${j.arriveExpected ?? j.arrive}, ${j.minutes} minutes, ${j.changes} changes. Show details`)}">
+            ${tag}
+            <span class="trip-head"><span class="times">${escapeHtml(j.leave)} → ${j.arriveExpected ? `<s>${escapeHtml(j.arrive)}</s> ${escapeHtml(j.arriveExpected)}` : escapeHtml(j.arrive)}</span>
+              <span class="meta">${mins(j.minutes)} · ${j.changes === 0 ? 'direct' : `${j.changes} change${j.changes > 1 ? 's' : ''}`}</span></span>
+            <span class="trip-chain">${chain}</span>
+            <span class="trip-status">${journeyStatus(j, isNow, best, i)}</span>
+          </button>
+          <ol class="legs" hidden></ol>
+        </li>`;
+    }).join('');
+}
+
+function legsHtml(j) {
+    return j.legs.map((l) => {
+        if (l.kind === 'walk') {
+            return `<li class="leg walk"><span class="t"></span><span class="d">Walk about ${mins(l.minutes)}${l.to ? ` to ${placeName(l.to)}` : ` to ${placeName(plan.to, 'where you’re going')}`}</span></li>`;
+        }
+        const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
+        const status = l.status === 'cancelled' || l.live ? statusHtml(l.status, l.statusText) : '<span class="muted">Timetable (no live data yet)</span>';
+        const arriveLate = l.arriveExpected && l.arriveDelaySec !== null
+            ? `<s>${escapeHtml(l.arrive)}</s> <b class="late-text">${escapeHtml(l.arriveExpected)} (${lateText(l.arriveDelaySec)})</b>`
+            : escapeHtml(l.arrive);
+        return `<li class="leg" style="--c:${escapeHtml(l.color)}">
+          <span class="t">${l.departExpected ? `<s>${escapeHtml(l.depart)}</s><small>${escapeHtml(l.departExpected)}</small>` : escapeHtml(l.depart)}</span>
+          <span class="d">${change}<b>${escapeHtml(legName(l))} to ${escapeHtml(l.headsign)}</b>
+            <span>From ${placeName(l.from)}${l.from?.platform ? `, platform ${escapeHtml(l.from.platform)}` : ''} · ${status}</span>
+            <span>${l.stops} stop${l.stops === 1 ? '' : 's'} · get off at ${placeName(l.to)}, ${arriveLate}</span></span>
+        </li>`;
+    }).join('');
+}
+
+function openPlanJourney(i) {
+    for (const card of $('plan-results').children) {
+        const open = Number(card.dataset.i) === i;
+        card.setAttribute('aria-expanded', String(open));
+        const legs = card.querySelector('.legs');
+        legs.hidden = !open;
+        if (open) legs.innerHTML = legsHtml(plan.journeys[i]);
+    }
+    drawPlan(plan.journeys[i]);
+}
+
+$('plan-results').addEventListener('click', (e) => {
+    const card = e.target.closest('.trip-card');
+    if (!card || !e.target.closest('button')) return;
+    openPlanJourney(Number(card.dataset.i));
+});
+
+// Each ride's real stops come from the trip; walks are straight dotted lines
+async function drawPlan(j) {
+    planShown = j;
+    planLayer.clearLayers();
+    journeyLayer.clearLayers();
+    const all = [];
+    const rides = await Promise.all(j.legs.map(async (l) => {
+        if (l.kind !== 'ride') return null;
+        try {
+            const trip = await getJson(`/api/trips/${encodeURIComponent(l.tripId)}`);
+            return trip.stops.filter((s) => s.sequence >= l.fromSeq && s.sequence <= l.toSeq && s.lat !== null);
+        } catch {
+            return [l.from, l.to].filter((s) => s?.lat != null);
+        }
+    }));
+    if (planShown !== j) return; // another journey was picked meanwhile
+    j.legs.forEach((l, i) => {
+        if (l.kind === 'walk') {
+            const placeOf = (p) => (!p ? null : p.lat !== undefined ? p : stations.find((s) => s.id === p.id));
+            const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? placeOf(plan.from);
+            const b = l.to ?? placeOf(plan.to);
+            if (a?.lat != null && b?.lat != null) {
+                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#3d4a43', weight: 4, dashArray: '0.1 8', lineCap: 'round' }).addTo(planLayer);
+                all.push([a.lat, a.lng], [b.lat, b.lng]);
+            }
+            return;
+        }
+        const pts = rides[i].map((s) => [s.lat, s.lng]);
+        if (pts.length < 2) return;
+        // A white edge, then the route colour on top: clean against the faded map
+        L.polyline(pts, { ...planStyle, className: 'plan-edge', color: '#ffffff', weight: 11, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(planLayer);
+        L.polyline(pts, { ...planStyle, color: l.color, weight: 6, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(planLayer);
+        for (const [k, s] of rides[i].entries()) {
+            const end = k === 0 || k === rides[i].length - 1;
+            if (!end) continue; // stops in between are in the list; on the map they only add noise
+            L.circleMarker([s.lat, s.lng], { pane: 'plan', renderer: planRenderer, radius: 6, weight: 3, color: l.color, fillColor: '#ffffff', fillOpacity: 1 })
+                .bindTooltip(escapeHtml(s.name)).addTo(planLayer);
+            L.tooltip({ permanent: true, direction: 'right', offset: [8, 0], className: 'plan-label', pane: 'tooltipPane' })
+                .setLatLng([s.lat, s.lng]).setContent(escapeHtml(s.name.replace(/ (station|ferry terminal)$/, ''))).addTo(planLayer);
+        }
+        all.push(...pts);
+    });
+    setPlanFocus(true);
+    for (const me of [plan.from, plan.to].filter((p) => p?.lat !== undefined && p.name === 'Near me')) {
+        L.circleMarker([me.lat, me.lng], { pane: 'plan', renderer: planRenderer, radius: 7, weight: 3, color: '#2f6b5a', fillColor: '#2f6b5a', fillOpacity: 1 })
+            .bindTooltip('You', { permanent: true, direction: 'right', offset: [8, 0], className: 'station-label' }).addTo(planLayer);
+    }
+    if (all.length) map.flyToBounds(all, { padding: [40, 40], maxZoom: 15, duration: reduceMotion() ? 0 : 0.8 });
+}
+
 // ---------- When: now, or a time up to 7 days ahead ----------
 // Brisbane has no daylight saving, so its time is always UTC+10
 function brisbaneNow() {
     return new Date(Date.now() + 10 * 3600 * 1000).toISOString().slice(0, 16);
 }
+let boardPicker = null;
 function setupWhen() {
-    const input = $('when-input');
-    const now = brisbaneNow();
-    input.min = now;
-    input.max = new Date(Date.now() + (10 + 7 * 24) * 3600 * 1000).toISOString().slice(0, 16);
-    input.value = state.at || now;
+    $('when-input').value = state.at || '';
+    boardPicker = whenPicker('board-pick', (value) => setWhen(value));
 }
 function setWhen(value) {
-    state.at = value && value > brisbaneNow() ? value : '';
+    state.at = value || '';
     $('when-now').hidden = !state.at;
-    if (!state.at) $('when-input').value = brisbaneNow();
+    $('when-input').value = state.at;
+    boardPicker?.refresh();
+    boardPicker?.close();
     saveUrl();
     loadBoard();
 }
@@ -671,7 +1075,9 @@ function describeWhen(at) {
     const d = new Date(`${at}:00Z`);
     const day = d.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
     const time = d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }).toLowerCase();
-    return `Timetable for ${day}, from ${time}. Live delays show up closer to the time.`;
+    return at < brisbaneNow()
+        ? `Timetable for ${day}, from ${time}. This time has passed, so there are no live delays.`
+        : `Timetable for ${day}, from ${time}. Live delays show up closer to the time.`;
 }
 
 async function loadBoard() {
@@ -693,7 +1099,7 @@ async function loadBoard() {
             <li class="${d.status === 'cancelled' ? 'cancelled' : ''}${d.tripId === state.selected ? ' selected' : ''}" data-trip="${escapeHtml(d.tripId)}" tabindex="0" role="button" aria-label="${escapeHtml(`${d.scheduled} ${d.routeShort ?? ''} to ${d.headsign}: show stops`)}">
               <span class="time">${d.expected ? `<small>${escapeHtml(d.scheduled)}</small>${escapeHtml(d.expected)}` : escapeHtml(d.scheduled)}</span>
               <span class="dest"><span class="to" style="--c:${escapeHtml(d.color)}" title="${escapeHtml(d.routeName)}">${d.mode && d.mode !== 'train' ? `<b class="route-no">${escapeHtml(d.routeShort)}</b> ` : ''}${escapeHtml(d.headsign)}</span>
-                ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${d.minutesAway} min` : ''}</span>` : ''}</span>
+                ${d.location ? `<span class="where">${escapeHtml(d.location)}${d.minutesAway > 0 ? ` · ${mins(d.minutesAway)}` : ''}</span>` : ''}</span>
               <span class="right">${statusHtml(d.status, d.statusText)}${d.platform ? `<span class="plat">Platform ${escapeHtml(d.platform)}</span>` : ''}</span>
             </li>`).join('');
         staggerOnce(board);
@@ -715,7 +1121,7 @@ $('board').addEventListener('click', openDeparture);
 $('board').addEventListener('keydown', openDeparture);
 
 // Quick times: Now, +30 min, +1 hr, +3 hr, tomorrow 7 am (Brisbane time)
-document.querySelector('.when-chips').addEventListener('click', (e) => {
+$('when-chips').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-when]');
     if (!btn) return;
     const v = btn.dataset.when;
@@ -728,11 +1134,9 @@ document.querySelector('.when-chips').addEventListener('click', (e) => {
         const base = state.at ? new Date(`${state.at}:00Z`).getTime() : Date.now() + 10 * 3600 * 1000;
         target = new Date(base + Number(v) * 60000).toISOString().slice(0, 16);
     }
-    $('when-input').value = target;
     setWhen(target);
 });
 
-$('when-input').addEventListener('change', (e) => setWhen(e.target.value));
 $('when-now').addEventListener('click', () => setWhen(''));
 setupWhen();
 $('when-now').hidden = !state.at;
@@ -848,7 +1252,7 @@ async function loadStats() {
             <li><span class="bar-label"><i class="line-dot" style="--c:${escapeHtml(l.color)}"></i>${escapeHtml(l.name)}</span>
               <span class="bar"><i class="${pctClass(l.onTimePercent)}" style="width:${l.onTimePercent}%"></i></span>
               <b>${l.onTimePercent}%</b></li>`).join('')}</ul>
-          <p class="hint">Late ones on ${escapeHtml(s.lines.slice(-1)[0].name)}, the least reliable line, were about ${s.lines.slice(-1)[0].avgLateMinutes} min late</p>
+          <p class="hint">Late ones on ${escapeHtml(s.lines.slice(-1)[0].name)}, the least reliable line, were about ${mins(s.lines.slice(-1)[0].avgLateMinutes)} late</p>
 
           <h3 class="stats-h">By time of day</h3>
           <p class="hint">When the trip was due to start</p>
@@ -859,7 +1263,7 @@ async function loadStats() {
           <h3 class="stats-h">Often late</h3>
           ${s.worst.length ? `<ol class="worst">${s.worst.map((w) => `
             <li><span class="to" style="--c:${escapeHtml(w.color)}">${escapeHtml(w.time)} ${escapeHtml(w.origin)} to ${escapeHtml(w.headsign)}</span>
-              <span class="quiet">about ${w.avgLateMinutes} min late · ${w.runs} runs</span></li>`).join('')}</ol>`
+              <span class="quiet">about ${mins(w.avgLateMinutes)} late · ${w.runs} runs</span></li>`).join('')}</ol>`
             : '<p class="empty">Each departure needs at least 2 recorded runs before it shows here. Check back in a day or two.</p>'}`;
     } catch (err) {
         box.innerHTML = '<p class="empty">The numbers aren’t loading right now. Try again in a minute.</p>';

@@ -164,3 +164,53 @@ export async function getDelayStats(toDate, days, onTimeSec) {
   ]);
   return { byRoute: byRoute.rows, byHour: byHour.rows, byDay: byDay.rows, worst: worst.rows, since: since.rows[0].first };
 }
+
+// ---------- Journey planner ----------
+
+// Every stop with where it is (platforms use their station's position) and its station's name
+export async function getPlannerStops() {
+  const { rows } = await pool.query(
+    `SELECT s.stop_id, s.station_id, sta.name, s.platform, sta.lat, sta.lng, sta.modes
+     FROM stops s JOIN stations sta ON sta.station_id = s.station_id
+     ORDER BY s.stop_id`
+  );
+  return rows;
+}
+
+// Every trip pattern's stops in order
+export async function getPatternStops() {
+  const { rows } = await pool.query(
+    `SELECT pattern_id, stop_sequence, stop_id, arr_offset, dep_offset, is_last
+     FROM pattern_stops ORDER BY pattern_id, stop_sequence`
+  );
+  return rows;
+}
+
+// The services (timetable "days") that run on one date
+async function servicesOn(date) {
+  const { rows } = await pool.query(
+    `SELECT c.service_id FROM calendar c
+     WHERE $1::date BETWEEN c.start_date AND c.end_date AND c.days[EXTRACT(ISODOW FROM $1::date)::int]
+       AND NOT EXISTS (SELECT 1 FROM calendar_dates x WHERE x.service_id = c.service_id AND x.date = $1::date AND x.exception_type = 2)
+     UNION
+     SELECT service_id FROM calendar_dates WHERE date = $1::date AND exception_type = 1`,
+    [date]
+  );
+  return rows.map((r) => r.service_id);
+}
+
+// The trips that run on one date, plus yesterday's trips that are still running after midnight
+// (their times are moved back a day, so 25:10 yesterday becomes 1:10 today).
+export async function getTripsOn(date) {
+  const yesterday = new Date(`${date}T00:00:00Z`);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const [today, before] = await Promise.all([servicesOn(date), servicesOn(yesterday.toISOString().slice(0, 10))]);
+  const { rows } = await pool.query(
+    `SELECT pattern_id, start_secs, trip_id, route_id FROM trips WHERE service_id = ANY($1)
+     UNION ALL
+     SELECT pattern_id, start_secs - 86400, trip_id, route_id FROM trips WHERE service_id = ANY($2) AND start_secs >= 64800
+     ORDER BY 1, 2`,
+    [today, before]
+  );
+  return rows;
+}

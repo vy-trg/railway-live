@@ -145,7 +145,7 @@ button { font: inherit; color: inherit; }
 .panel { display: grid; align-content: start; gap: 14px; min-width: 0; }
 .tabs { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--sand-2); }
 .tabs button {
-    flex: 1; border: 0; background: transparent; padding: 9px 10px; border-radius: 999px;
+    flex: 1 1 0; min-width: 0; border: 0; background: transparent; padding: 9px 10px; border-radius: 999px;
     font-weight: 800; font-size: 0.9rem; color: var(--muted); cursor: pointer;
 }
 .tabs button[aria-selected="true"] { background: var(--paper); color: var(--gum); box-shadow: 0 1px 3px rgb(60 45 20 / 0.1); }
@@ -342,7 +342,7 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .tabs { position: relative; isolation: isolate; }
 .tabs::before {
     content: ""; position: absolute; z-index: -1; top: 4px; bottom: 4px; left: 4px;
-    width: calc((100% - 8px - 12px) / 4); border-radius: 999px; background: var(--paper);
+    width: calc((100% - 8px - 16px) / 5); border-radius: 999px; background: var(--paper);
     transform: translateX(calc(var(--tab, 0) * (100% + 4px)));
     transition: transform 260ms var(--ease-in-out);
 }
@@ -423,7 +423,8 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .worst li:first-child { border-top: 0; }
 .worst .to { font-weight: 800; font-size: 0.92rem; }
 @media (prefers-reduced-motion: no-preference) { .bars .bar i { transition: width 400ms var(--ease-out); } }
-.tabs button { white-space: nowrap; padding-inline: 6px; }
+.tabs button { white-space: nowrap; padding-inline: 2px; font-size: 0.85rem; letter-spacing: -0.01em; }
+.tabs .count { margin-left: 2px; }
 
 /* ---------- Trams and ferries ---------- */
 /* Same cream ring and delay colour as the train circles; only the shape changes */
@@ -456,3 +457,74 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .board li[data-trip]:hover, .board li.selected { background: color-mix(in srgb, var(--gum) 10%, var(--paper)); }
 .board li[data-trip]:focus-visible { outline: 2px solid var(--gum); outline-offset: -2px; }
 .leaflet-tooltip.station-label { font-weight: 800; }
+
+/* Plan: from, to, when, then journeys */
+.plan-form { display: grid; gap: 10px; position: relative; }
+.plan-place { display: grid; gap: 4px; }
+.plan-place small { font-size: 0.75rem; }
+.plan-row { display: flex; gap: 8px; }
+.plan-row .station-input { flex: 1; min-width: 0; }
+.plan-row .chip-btn { width: 7.5rem; flex: none; }
+.chip-btn { border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 0 14px; font-weight: 800; font-size: 0.85rem; color: var(--gum); cursor: pointer; white-space: nowrap; }
+.chip-btn[aria-pressed="true"] { background: var(--gum); color: #fff; border-color: var(--gum); }
+.primary-btn { border: 0; border-radius: 14px; padding: 12px 16px; background: var(--gum); color: #fff; font-weight: 800; cursor: pointer; }
+.primary-btn:disabled { opacity: 0.6; cursor: progress; }
+.plan-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.trip-card { background: var(--paper); border-radius: 14px; border: 2px solid transparent; }
+.trip-card[aria-expanded="true"], .trip-card.selected { border-color: var(--gum); }
+.trip-card > button { all: unset; box-sizing: border-box; display: grid; gap: 6px; width: 100%; padding: 12px 14px; cursor: pointer; }
+.trip-card > button:focus-visible { outline: 2px solid var(--gum); outline-offset: 2px; border-radius: 12px; }
+.trip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.trip-head .times { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.02em; }
+.trip-head .times small { font-size: 0.8rem; font-weight: 700; color: var(--late); margin-left: 4px; }
+.trip-head .meta { font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
+.trip-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+.trip-chain .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-weight: 800; background: var(--c); color: var(--t); }
+.trip-chain .sep { opacity: 0.6; }
+.trip-flag { font-size: 0.8rem; font-weight: 800; }
+.trip-flag.tight { color: var(--late); } .trip-flag.miss { color: var(--verylate); }
+.legs { list-style: none; margin: 0; padding: 0 14px 12px; display: grid; gap: 10px; }
+.leg { display: grid; grid-template-columns: 4.8ch 1fr; gap: 10px; font-size: 0.9rem; }
+.leg .t { font-weight: 800; }
+.leg .t small { display: block; font-size: 0.72rem; color: var(--late); }
+.leg .d { border-left: 4px solid var(--c, var(--line)); padding-left: 10px; display: grid; gap: 2px; }
+.leg.walk .d { border-left-style: dotted; color: var(--muted); }
+.leg .d b { font-weight: 800; }
+.leg .d span { font-size: 0.8rem; color: var(--muted); }
+.change { font-size: 0.8rem; font-weight: 800; }
+.change.make { color: var(--ontime); } .change.tight { color: var(--late); } .change.miss { color: var(--verylate); }
+
+/* Day and time picker with a Done button (the browser's own picker can't have one) */
+.when-pick { position: relative; }
+.when-btn { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--paper); border-radius: 14px; padding: 12px 14px; font: inherit; font-weight: 700; color: var(--ink); cursor: pointer; }
+.when-btn[aria-expanded="true"] { border-color: var(--gum); }
+.when-panel { margin-top: 8px; display: grid; gap: 8px; padding: 14px; border-radius: 16px; background: var(--paper); border: 1px solid var(--line); box-shadow: 0 10px 30px rgb(0 0 0 / 0.08); }
+.w-time { display: flex; align-items: center; gap: 6px; }
+.w-time select { width: auto; flex: 1; min-width: 0; }
+.w-time .seg { flex: none; }
+.when-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.when-actions .primary-btn { padding: 10px 22px; }
+
+/* Every Plan field is the full width (the Departures picker shares a row with "Back to now") */
+#view-plan .when { grid-template-columns: 1fr; }
+
+/* While a journey is shown, the rest of the map steps back */
+#map .leaflet-overlay-pane, #map .leaflet-marker-pane, #map .leaflet-shadow-pane { transition: opacity 250ms; }
+#map.is-planning .leaflet-overlay-pane, #map.is-planning .leaflet-marker-pane { opacity: 0.25; }
+#map.is-planning .leaflet-plan-pane { opacity: 1; }
+
+/* Plan results: what live data says, and the one to take */
+.trip-card.best { border-color: var(--gum); }
+.best-tag { justify-self: start; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.02em; text-transform: uppercase; color: #fff; background: var(--gum); border-radius: 999px; padding: 2px 10px; }
+.trip-head .times s, .leg s { color: var(--muted); font-weight: 600; text-decoration-thickness: 1.5px; }
+.trip-status { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.trip-flag.ok { color: var(--ontime); }
+.trip-flag.none { color: var(--muted); font-weight: 700; }
+.trip-chain .badge i { font-style: normal; font-size: 0.72rem; margin-left: 2px; padding: 0 4px; border-radius: 999px; background: rgb(255 255 255 / 0.85); color: #9a4a12; }
+.late-text { color: var(--late); font-weight: 800; }
+.leg .t s { display: block; font-size: 0.75rem; }
+
+/* Journey on the map: soft shadow under the line, small labels */
+.leaflet-plan-pane svg { filter: drop-shadow(0 1px 2px rgb(30 40 35 / 0.35)); }
+.plan-label { background: #fff; border: 0; border-radius: 8px; box-shadow: 0 1px 4px rgb(30 40 35 / 0.25); padding: 3px 8px; font-size: 0.78rem; font-weight: 800; color: #24312b; }
+.plan-label::before { display: none; }
