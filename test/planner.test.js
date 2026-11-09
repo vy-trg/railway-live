@@ -152,3 +152,31 @@ test('leaving from a station: how you get there doesn\'t matter', () => {
   const byStation = new Map([['place_y', [2]]]);
   assert.deepEqual(placeToStops({ stationId: 'place_y' }, spread, byStation, 800, 'car'), [{ stop: 2, walk: 0 }]);
 });
+
+// ---------- Tidy legs: nothing that reads as nonsense ----------
+import { tidyLegs } from '../planner.js';
+
+const st = [
+  { stationId: 'A' }, { stationId: 'A' }, { stationId: 'B' }, { stationId: 'C' },
+];
+const ride = (from, to) => ({ kind: 'ride', fromStop: from, toStop: to });
+
+test('two walks in a row become one walk', () => {
+  const legs = tidyLegs([{ kind: 'walk', fromStop: null, toStop: 2, secs: 720 }, { kind: 'walk', fromStop: 2, toStop: 3, secs: 360 }, ride(3, 0)], st);
+  assert.equal(legs.length, 2);
+  assert.deepEqual([legs[0].toStop, legs[0].secs], [3, 1080]);
+});
+
+test('a few seconds of walking at the end (place on the stop itself) is dropped', () => {
+  const legs = tidyLegs([ride(2, 3), { kind: 'walk', fromStop: 3, toStop: null, secs: 30 }], st);
+  assert.equal(legs.length, 1);
+});
+
+test('a real walk at the end stays', () => {
+  assert.equal(tidyLegs([ride(2, 3), { kind: 'walk', fromStop: 3, toStop: null, secs: 300 }], st).length, 2);
+});
+
+test('walking between platforms of one station is a platform change', () => {
+  const legs = tidyLegs([ride(2, 0), { kind: 'walk', fromStop: 0, toStop: 1, secs: 120 }, ride(1, 3)], st);
+  assert.equal(legs[1].platformChange, true);
+});

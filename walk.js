@@ -44,3 +44,26 @@ export async function walkRoute(a, b, { fetchImpl = fetch, distanceM, mode = 'wa
   cache.set(key, result);
   return result;
 }
+
+// A bus ride whose route track doesn't fit (a different variant): ask the car router for the road
+// through its stops instead. At most 25 points (the router's limit is higher, but this is plenty
+// to keep it on the right roads). Same cache and rules as walks.
+export async function roadPath(points, { fetchImpl = fetch } = {}) {
+  if (points.length < 2) return null;
+  const step = Math.max(1, Math.ceil(points.length / 24));
+  const via = points.filter((_, i) => i % step === 0);
+  if (via[via.length - 1] !== points[points.length - 1]) via.push(points[points.length - 1]);
+  const key = `road:${via.map(([lat, lng]) => `${round(lat)},${round(lng)}`).join(';')}`;
+  if (cache.has(key)) return cache.get(key);
+  const url = `${ROUTERS.car}/${via.map(([lat, lng]) => `${round(lng)},${round(lat)}`).join(';')}?overview=full&geometries=geojson`;
+  const res = await fetchImpl(url, {
+    headers: { 'User-Agent': 'RailwayLive/1.0 (+https://github.com/vy-trg/railway-live)' },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) throw new Error(`Road router ${res.status}`);
+  const route = parseRoute(await res.json(), 'car');
+  const result = route ? route.points : null;
+  if (cache.size >= CACHE_SIZE) cache.delete(cache.keys().next().value);
+  cache.set(key, result);
+  return result;
+}

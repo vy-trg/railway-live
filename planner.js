@@ -4,6 +4,7 @@
 import * as db from './db/queries.js';
 import { buildStopPatterns, planJourneys, distanceM, walkSecs, DETOUR } from './raptor.js';
 import { classify } from './connection.js';
+import { slicePath } from './geo.js';
 import { delayAtStop, describeDelay, delayLevel, formatClock } from './schedule.js';
 
 export const MAX_WALK_M = 400; // walking between stops while changing
@@ -89,7 +90,7 @@ const tripCache = new Map(); // date -> trip table (today and tomorrow are enoug
 export function getNetwork() {
   if (!networkPromise) {
     networkPromise = (async () => {
-      const [stopRows, patternRows] = await Promise.all([db.getPlannerStops(), db.getPatternStops()]);
+      const [stopRows, patternRows, shapeRows] = await Promise.all([db.getPlannerStops(), db.getPatternStops(), db.getRouteShapes()]);
       const stops = stopRows.map((r) => ({
         id: r.stop_id, stationId: r.station_id, name: r.name, platform: r.platform, lat: r.lat, lng: r.lng, modes: r.modes ?? '',
       }));
@@ -103,6 +104,7 @@ export function getNetwork() {
       return {
         stops,
         stopIndex,
+        shapes: new Map(shapeRows.map((r) => [r.route_id, r.coords])),
         byStation,
         patternIndex: new Map(patterns.map((p, i) => [p.id, i])),
         network: {
@@ -165,6 +167,26 @@ export function placeToStops(place, stops, byStation, maxM = MAX_ACCESS_M, mode 
   return out;
 }
 
+// Pure: no walk twice in a row (one walk from the first place to the last), and no walk of a few
+// metres at the very start or end (a place anchored on the stop itself). A walk between two stops
+// of the same station is marked as a platform change.
+export function tidyLegs(legs, stops) {
+  const out = [];
+  for (const l of legs) {
+    const prev = out[out.length - 1];
+    if (l.kind === 'walk' && prev?.kind === 'walk') {
+      out[out.length - 1] = { ...prev, toStop: l.toStop, secs: prev.secs + l.secs };
+      continue;
+    }
+    out.push(l);
+  }
+  const tiny = (l) => l?.kind === 'walk' && l.mode !== 'bike' && l.mode !== 'car' && l.secs <= 45;
+  if (out.length > 1 && tiny(out[out.length - 1])) out.pop();
+  if (out.length > 1 && tiny(out[0])) out.shift();
+  return out.map((l) => (l.kind === 'walk' && l.fromStop != null && l.toStop != null
+    && stops[l.fromStop].stationId === stops[l.toStop].stationId ? { ...l, platformChange: true } : l));
+}
+
 // from/to: { stationId } or { lat, lng }; date "YYYY-MM-DD"; secs = seconds after midnight
 export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 0, access = 'walk' } = {}) {
   const net = await getNetwork();
@@ -176,7 +198,7 @@ export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 
   const sources = origin.map((o) => ({ stop: o.stop, secs: secs + o.walk }));
   const targets = new Map(dest.map((d) => [d.stop, d.walk]));
   const startWalk = new Map(origin.map((o) => [o.stop, o.walk]));
-  const journeys = planJourneys(net.network, trips, sources, targets, { count, extraChangeSecs });
+  const journeys = planJourneys(net.network, trips, sources, targets, { count, extraChangeSecs, startWalks: Boolean(from.stationId) });
   // Put the walk to the first stop back in, so the journey reads from where you are
   return {
     journeys: journeys.map((j) => {
@@ -184,10 +206,11 @@ export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 
       const walk = first ? startWalk.get(first.fromStop) ?? 0 : 0;
       const how = from.stationId ? 'walk' : access;
       const legs = walk > 0 ? [{ kind: 'walk', mode: how, fromStop: null, toStop: first.fromStop, secs: walk }, ...j.legs] : j.legs;
-      return { ...j, legs };
+      return { ...j, legs: tidyLegs(legs, net.stops) };
     }),
     stops: net.stops,
     patterns: net.network.patterns,
+    shapes: net.shapes,
   };
 }
 
@@ -195,7 +218,8 @@ export async function plan(from, to, date, secs, count = 5, { extraChangeSecs = 
 // and every change says whether you'll make it (connection.js): Make it / Tight / Miss.
 // trips: Map trip_id -> { headsign, short_name, long_name, mode, color, text_color }
 // updates: Map trip_id -> trip update (may be empty)
-export function describeJourney(journey, stops, patterns, trips, updates) {
+// shapes: route_id -> the route's main track; tripShapes: trip_id -> that trip's exact track
+export function describeJourney(journey, stops, patterns, trips, updates, shapes = new Map(), tripShapes = new Map()) {
   const stopOut = (i) => (i === null || i === undefined ? null : {
     name: stops[i].name, platform: stops[i].platform, lat: stops[i].lat, lng: stops[i].lng,
   });
@@ -205,13 +229,17 @@ export function describeJourney(journey, stops, patterns, trips, updates) {
   let sameStop = false; // changing at the same stop: a minute to get off and on, as in raptor.js
   for (const l of journey.legs) {
     if (l.kind === 'walk') {
-      legs.push({ kind: 'walk', mode: l.mode ?? 'walk', minutes: Math.max(1, Math.round(l.secs / 60)), from: stopOut(l.fromStop), to: stopOut(l.toStop) });
+      legs.push({ kind: 'walk', mode: l.mode ?? 'walk', platformChange: Boolean(l.platformChange), minutes: Math.max(1, Math.round(l.secs / 60)), from: stopOut(l.fromStop), to: stopOut(l.toStop) });
       if (readyAt !== null) readyAt += l.secs;
       sameStop = false;
       continue;
     }
     const p = patterns[l.pattern];
     const t = trips.get(l.tripId) || {};
+    // The ride's stops, and the route's track between them when the track fits (see geo.js)
+    const rideStops = p.stops.slice(l.fromPos, l.toPos + 1).map((i) => [stops[i].lat, stops[i].lng]);
+    // The trip's own track first (always the right variant), then the route's main track
+    const onTrack = slicePath(tripShapes.get(l.tripId), rideStops, 500) ?? slicePath(shapes.get(l.routeId), rideStops);
     const tu = updates.get(l.tripId);
     const dep = delayAtStop(tu, p.seq[l.fromPos]);
     const arr = delayAtStop(tu, p.seq[l.toPos]);
@@ -230,6 +258,10 @@ export function describeJourney(journey, stops, patterns, trips, updates) {
       textColor: `#${t.text_color ?? 'FFFFFF'}`,
       from: stopOut(l.fromStop),
       to: stopOut(l.toStop),
+      // track: follows the real road or rails. stops: straight lines between stops (the server
+      // then asks for a road route for buses, see walk.js roadPath)
+      path: onTrack ?? rideStops,
+      pathFrom: onTrack ? 'track' : 'stops',
       fromSeq: p.seq[l.fromPos],
       toSeq: p.seq[l.toPos],
       depart: formatClock(l.departSecs),
