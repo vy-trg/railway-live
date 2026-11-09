@@ -93,7 +93,7 @@ function showTab(name) {
     if (name === 'board') showStationOnMap(stations.find((x) => x.id === state.station), false);
     else stationPin.clearLayers();
     // The planned journey's line belongs to the Plan tab
-    if (name !== 'plan') planLayer.clearLayers();
+    if (name !== 'plan') { planLayer.clearLayers(); setPlanFocus(false); }
     else if (planShown) drawPlan(planShown);
     saveUrl();
 }
@@ -665,6 +665,7 @@ function describeAt(value) {
     const clock = `${h % 12 === 0 ? 12 : h % 12}:${pad2(m)} ${h < 12 ? 'am' : 'pm'}`;
     if (date === brisbaneDateAfter(0)) return `Today, ${clock}`;
     if (date === brisbaneDateAfter(1)) return `Tomorrow, ${clock}`;
+    if (date === brisbaneDateAfter(-1)) return `Yesterday, ${clock}`;
     const d = new Date(`${date}T00:00:00Z`);
     return `${d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}, ${clock}`;
 }
@@ -687,9 +688,11 @@ function whenPicker(rootId, onDone) {
 
     const refresh = () => { root.querySelector('.when-text').textContent = describeAt(input.value); };
     const open = () => {
-        day.innerHTML = Array.from({ length: 8 }, (_, i) => {
+        // 3 days back (timetable only) to 7 days ahead
+        day.innerHTML = Array.from({ length: 11 }, (_, k) => {
+            const i = k - 3;
             const date = brisbaneDateAfter(i);
-            const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(`${date}T00:00:00Z`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+            const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : i === -1 ? 'Yesterday' : new Date(`${date}T00:00:00Z`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
             return `<option value="${date}">${label}</option>`;
         }).join('');
         // Start from the chosen time, or now rounded up to the next 5 minutes
@@ -720,11 +723,6 @@ function whenPicker(rootId, onDone) {
         const pm = ampm.querySelector('[aria-pressed="true"]').dataset.ampm === 'pm';
         const h12 = Number(hour.value) % 12;
         const value = `${day.value}T${pad2(h12 + (pm ? 12 : 0))}:${pad2(Number(min.value))}`;
-        if (value < brisbaneNow()) {
-            err.textContent = `${describeAt(value).replace('Today, ', '')} today has already passed. Pick a later time, or another day.`;
-            err.hidden = false;
-            return;
-        }
         input.value = value;
         refresh();
         close();
@@ -740,7 +738,15 @@ function whenPicker(rootId, onDone) {
 setInterval(() => whenPickers.forEach((p) => p.refresh()), 60000);
 
 // ---------- Plan: from A to B, with changes ----------
+// The planned journey gets its own layer above everything, and the rest of the map fades,
+// so its line can't be confused with the other lines of the same colour
+map.createPane('plan').style.zIndex = 650;
+const planRenderer = L.svg({ pane: 'plan' });
 const planLayer = L.layerGroup().addTo(map);
+const planStyle = { pane: 'plan', renderer: planRenderer, interactive: false };
+function setPlanFocus(on) {
+    map.getContainer().classList.toggle('is-planning', on);
+}
 let planShown = null; // the journey drawn on the map
 const plan = { from: null, to: null, journeys: [] }; // from/to: { id, name } or { lat, lng, name }
 
@@ -812,6 +818,8 @@ $('plan-swap').addEventListener('click', () => {
     $('plan-to').value = from;
     [plan.from, plan.to] = [plan.to, plan.from];
     $('plan-near').setAttribute('aria-pressed', String(plan.from?.lat !== undefined));
+    $('plan-error').hidden = true;
+    if ($('plan-from').value.trim() && $('plan-to').value.trim()) findJourneys();
 });
 
 function planError(text) {
@@ -846,26 +854,27 @@ const placeQuery = (prefix, p) => (p.lat !== undefined
 async function findJourneys() {
     $('plan-error').hidden = true;
     // Use what's typed now, unless From is "Near me"
-    if (!(plan.from?.lat !== undefined && $('plan-from').value === 'Near me')) {
+    const isNear = (p, id) => p?.lat !== undefined && $(id).value === 'Near me';
+    if (!isNear(plan.from, 'plan-from')) {
         const f = findStation($('plan-from').value);
         if (f.several) return planError(`More than one place matches From: ${f.several.join(', ')}. Pick one from the list.`);
         plan.from = f.match ? { id: f.match.id, name: f.match.name } : null;
     }
-    const t = findStation($('plan-to').value);
-    if (t.several) return planError(`More than one place matches To: ${t.several.join(', ')}. Pick one from the list.`);
-    plan.to = t.match ? { id: t.match.id, name: t.match.name } : null;
+    if (!isNear(plan.to, 'plan-to')) {
+        const t = findStation($('plan-to').value);
+        if (t.several) return planError(`More than one place matches To: ${t.several.join(', ')}. Pick one from the list.`);
+        plan.to = t.match ? { id: t.match.id, name: t.match.name } : null;
+    }
+    if (plan.from?.lat !== undefined && plan.to?.lat !== undefined && plan.from.name === 'Near me' && plan.to.name === 'Near me') {
+        return planError('From and To are both Near me. Pick a station or place for one of them.');
+    }
     if (!plan.from) return planError('Pick where you’re leaving from: start typing and choose from the list, or press Near me.');
     if (!plan.to) return planError('Pick where you’re going: start typing and choose a station or stop from the list.');
     if (plan.from.id && plan.from.id === plan.to.id) return planError('From and To are the same place.');
-    if (plan.from.id) $('plan-from').value = plan.from.name;
+    $('plan-from').value = plan.from.name;
     $('plan-to').value = plan.to.name;
 
     const when = $('plan-when').value;
-    if (when && when < brisbaneNow()) {
-        $('plan-when').value = '';
-        planPicker.refresh();
-        return planError(`${describeAt(when)} has already passed. Pick a later time, or press Now.`);
-    }
     const at = when ? `&at=${encodeURIComponent(when)}` : '';
     const go = $('plan-go');
     const list = $('plan-results');
@@ -878,10 +887,10 @@ async function findJourneys() {
         const n = `${res.journeys.length} ${res.journeys.length === 1 ? 'journey' : 'journeys'}`;
         $('plan-note').textContent = res.note ?? (res.nextDay
             ? `Nothing more today. ${n} tomorrow morning (timetable). Walks are estimates.`
-            : `${n} leaving from ${res.at}${res.planned ? ' (timetable; live delays show closer to the time)' : ', with live delays'}. Walks are estimates.`);
+            : `${n} leaving from ${res.at}${res.past ? ' (timetable: this time has passed, so there are no live delays)' : res.planned ? ' (timetable; live delays show closer to the time)' : ', with live delays'}. Walks are estimates.`);
         renderJourneys();
         if (res.journeys.length) openPlanJourney(0);
-        else planLayer.clearLayers();
+        else { planLayer.clearLayers(); setPlanFocus(false); planShown = null; }
     } catch (err) {
         $('plan-note').textContent = '';
         planError(err.message && !/^HTTP/.test(err.message) ? err.message : 'Journeys aren’t loading right now. Try again in a moment.');
@@ -968,24 +977,31 @@ async function drawPlan(j) {
             const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? placeOf(plan.from);
             const b = l.to ?? placeOf(plan.to);
             if (a?.lat != null && b?.lat != null) {
-                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { color: '#6e7a72', weight: 3, dashArray: '2 6', interactive: false }).addTo(planLayer);
+                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#fffaf3', weight: 8 }).addTo(planLayer);
+                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#24312b', weight: 4, dashArray: '1 8', lineCap: 'round' }).addTo(planLayer);
                 all.push([a.lat, a.lng], [b.lat, b.lng]);
             }
             return;
         }
         const pts = rides[i].map((s) => [s.lat, s.lng]);
         if (pts.length < 2) return;
-        L.polyline(pts, { color: '#fffaf3', weight: 8, opacity: 0.95, interactive: false }).addTo(planLayer);
-        L.polyline(pts, { color: l.color, weight: 4, interactive: false }).addTo(planLayer);
+        // A dark outline and a thick line in the route colour: stands out from the faded map
+        L.polyline(pts, { ...planStyle, color: '#24312b', weight: 13, opacity: 0.9, lineJoin: 'round' }).addTo(planLayer);
+        L.polyline(pts, { ...planStyle, color: l.color, weight: 8, lineJoin: 'round' }).addTo(planLayer);
         for (const [k, s] of rides[i].entries()) {
             const end = k === 0 || k === rides[i].length - 1;
-            L.circleMarker([s.lat, s.lng], { radius: end ? 6 : 3, weight: 2, color: l.color, fillColor: '#fffaf3', fillOpacity: 1 })
+            L.circleMarker([s.lat, s.lng], { pane: 'plan', renderer: planRenderer, radius: end ? 7 : 3.5, weight: end ? 3 : 2, color: '#24312b', fillColor: '#fffaf3', fillOpacity: 1 })
                 .bindTooltip(escapeHtml(s.name)).addTo(planLayer);
+            if (end) {
+                L.tooltip({ permanent: true, direction: 'right', offset: [10, 0], className: 'station-label', pane: 'tooltipPane' })
+                    .setLatLng([s.lat, s.lng]).setContent(escapeHtml(s.name.replace(/ (station|ferry terminal)$/, ''))).addTo(planLayer);
+            }
         }
         all.push(...pts);
     });
-    if (plan.from?.lat !== undefined) {
-        L.circleMarker([plan.from.lat, plan.from.lng], { radius: 7, weight: 3, color: '#2f6b5a', fillColor: '#2f6b5a', fillOpacity: 1 })
+    setPlanFocus(true);
+    for (const me of [plan.from, plan.to].filter((p) => p?.lat !== undefined && p.name === 'Near me')) {
+        L.circleMarker([me.lat, me.lng], { pane: 'plan', renderer: planRenderer, radius: 7, weight: 3, color: '#2f6b5a', fillColor: '#2f6b5a', fillOpacity: 1 })
             .bindTooltip('You', { permanent: true, direction: 'right', offset: [8, 0], className: 'station-label' }).addTo(planLayer);
     }
     if (all.length) map.flyToBounds(all, { padding: [40, 40], maxZoom: 15, duration: reduceMotion() ? 0 : 0.8 });
@@ -998,11 +1014,11 @@ function brisbaneNow() {
 }
 let boardPicker = null;
 function setupWhen() {
-    $('when-input').value = state.at && state.at > brisbaneNow() ? state.at : '';
+    $('when-input').value = state.at || '';
     boardPicker = whenPicker('board-pick', (value) => setWhen(value));
 }
 function setWhen(value) {
-    state.at = value && value > brisbaneNow() ? value : '';
+    state.at = value || '';
     $('when-now').hidden = !state.at;
     $('when-input').value = state.at;
     boardPicker?.refresh();
@@ -1014,7 +1030,9 @@ function describeWhen(at) {
     const d = new Date(`${at}:00Z`);
     const day = d.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
     const time = d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }).toLowerCase();
-    return `Timetable for ${day}, from ${time}. Live delays show up closer to the time.`;
+    return at < brisbaneNow()
+        ? `Timetable for ${day}, from ${time}. This time has passed, so there are no live delays.`
+        : `Timetable for ${day}, from ${time}. Live delays show up closer to the time.`;
 }
 
 async function loadBoard() {

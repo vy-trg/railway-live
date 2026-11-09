@@ -41,13 +41,17 @@ To give several options, the planner runs again leaving a minute after the first
 | Changes | up to 4 (5 vehicles) | More is rarely useful |
 | Make it / Tight / Miss | `connection.js`: 3+ min spare / 0–3 / less | Same rule as the train + bus feature |
 
+## On the map
+
+When a journey is shown, the rest of the map fades to a quarter and the journey is drawn on its own layer on top: a thick line in the route's colour with a dark outline, the stops along it, and labels where you get on, change and get off. Walks are dark dotted lines.
+
 ## Places by name
 
 Typing "griffith" shows every Griffith campus first (Nathan, Mt Gravatt, Gold Coast, Logan, South Bank), like a map search. Also UQ St Lucia, QUT Gardens Point and Kelvin Grove, and both Brisbane Airport terminals. Each place is anchored on a real stop in `landmarks.js`, and the planner uses every stop within 800 m of it. It's a short hand-picked list, not an address search.
 
 ## Choosing a time
 
-The browser's own date picker has no "Done" button and lets you pick a time that has already passed, which made the planner quietly use *now* instead. The Plan and Departures tabs now use their own picker: day, hour, minutes, am/pm, then **Done**. A time that has passed is refused with a message. Done runs the search straight away.
+The browser's own date picker has no "Done" button and lets you pick a time that has already passed, which made the planner quietly use *now* instead. The Plan and Departures tabs now use their own picker: day, hour, minutes, am/pm, then **Done**. Done runs the search straight away. Times up to 7 days back work too (the timetable only: there are no live delays for a time that has passed, and nothing before the first day of TransLink's current timetable).
 
 If nothing runs any more that day, the planner shows the first journeys the next morning and says so.
 

@@ -196,12 +196,14 @@ app.get('/api/plan', handle(async (req, res) => {
     const now = await nowSec();
     let date;
     let secs;
+    let past = false;
     if (req.query.at !== undefined) {
         const at = parseLocalTime(String(req.query.at));
         if (!at) return res.status(400).json({ error: 'Pick a date and time' });
-        if (at.epoch < now - 300 || at.epoch > now + 7 * 86400) {
-            return res.status(400).json({ error: 'That time has passed. Pick a time from now to 7 days ahead.' });
+        if (at.epoch < now - 7 * 86400 || at.epoch > now + 7 * 86400) {
+            return res.status(400).json({ error: 'Pick a time within 7 days of today.' });
         }
+        past = at.epoch < now - 300;
         ({ date, secs } = at);
     } else {
         ({ date, secs } = brisbaneClock(now));
@@ -235,6 +237,7 @@ app.get('/api/plan', handle(async (req, res) => {
         date,
         at: formatClock(secs),
         nextDay,
+        past,
         planned: req.query.at !== undefined,
         stale: Boolean(main?.stale || bus?.stale),
         journeys: result.journeys.map((j) => describeJourney(j, result.stops, result.patterns, trips, updates)),
@@ -264,8 +267,8 @@ app.get('/api/departures', handle(async (req, res) => {
     if (req.query.at !== undefined) {
         const at = parseLocalTime(String(req.query.at));
         if (!at) return res.status(400).json({ error: 'Pick a date and time' });
-        if (at.epoch < now - 3600 || at.epoch > now + 7 * 86400) {
-            return res.status(400).json({ error: 'Pick a time between now and 7 days ahead' });
+        if (at.epoch < now - 7 * 86400 || at.epoch > now + 7 * 86400) {
+            return res.status(400).json({ error: 'Pick a time within 7 days of today' });
         }
         const rows = await db.getDepartures(station, at.date, at.secs, at.secs + 3 * 3600, 12);
         return res.json({

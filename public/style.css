@@ -145,7 +145,7 @@ button { font: inherit; color: inherit; }
 .panel { display: grid; align-content: start; gap: 14px; min-width: 0; }
 .tabs { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--sand-2); }
 .tabs button {
-    flex: 1; border: 0; background: transparent; padding: 9px 10px; border-radius: 999px;
+    flex: 1 1 0; min-width: 0; border: 0; background: transparent; padding: 9px 10px; border-radius: 999px;
     font-weight: 800; font-size: 0.9rem; color: var(--muted); cursor: pointer;
 }
 .tabs button[aria-selected="true"] { background: var(--paper); color: var(--gum); box-shadow: 0 1px 3px rgb(60 45 20 / 0.1); }
@@ -423,7 +423,8 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .worst li:first-child { border-top: 0; }
 .worst .to { font-weight: 800; font-size: 0.92rem; }
 @media (prefers-reduced-motion: no-preference) { .bars .bar i { transition: width 400ms var(--ease-out); } }
-.tabs button { white-space: nowrap; padding-inline: 6px; }
+.tabs button { white-space: nowrap; padding-inline: 2px; font-size: 0.85rem; letter-spacing: -0.01em; }
+.tabs .count { margin-left: 2px; }
 
 /* ---------- Trams and ferries ---------- */
 /* Same cream ring and delay colour as the train circles; only the shape changes */
@@ -463,9 +464,9 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .plan-place small { font-size: 0.75rem; }
 .plan-row { display: flex; gap: 8px; }
 .plan-row .station-input { flex: 1; min-width: 0; }
+.plan-row .chip-btn { width: 7.5rem; flex: none; }
 .chip-btn { border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 0 14px; font-weight: 800; font-size: 0.85rem; color: var(--gum); cursor: pointer; white-space: nowrap; }
 .chip-btn[aria-pressed="true"] { background: var(--gum); color: #fff; border-color: var(--gum); }
-.plan-swap { justify-self: end; margin: -6px 0; }
 .primary-btn { border: 0; border-radius: 14px; padding: 12px 16px; background: var(--gum); color: #fff; font-weight: 800; cursor: pointer; }
 .primary-btn:disabled { opacity: 0.6; cursor: progress; }
 .plan-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -503,3 +504,11 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .w-time .seg { flex: none; }
 .when-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
 .when-actions .primary-btn { padding: 10px 22px; }
+
+/* Every Plan field is the full width (the Departures picker shares a row with "Back to now") */
+#view-plan .when { grid-template-columns: 1fr; }
+
+/* While a journey is shown, the rest of the map steps back */
+#map .leaflet-overlay-pane, #map .leaflet-marker-pane, #map .leaflet-shadow-pane { transition: opacity 250ms; }
+#map.is-planning .leaflet-overlay-pane, #map.is-planning .leaflet-marker-pane { opacity: 0.25; }
+#map.is-planning .leaflet-plan-pane { opacity: 1; }

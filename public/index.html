@@ -96,10 +96,12 @@
                         <datalist id="plan-from-list"></datalist>
                         <small id="plan-near-hint" class="muted">Uses your location once, to find stops within 800 m. It isn’t saved.</small>
                     </div>
-                    <button id="plan-swap" type="button" class="icon-btn plan-swap" aria-label="Swap from and to">⇅</button>
                     <div class="plan-place">
                         <label class="field-label" for="plan-to">To</label>
-                        <input id="plan-to" class="station-input" list="plan-to-list" autocomplete="off" placeholder="Station, stop or place, e.g. Griffith University">
+                        <div class="plan-row">
+                            <input id="plan-to" class="station-input" list="plan-to-list" autocomplete="off" placeholder="Station, stop or place, e.g. Griffith University">
+                            <button id="plan-swap" type="button" class="chip-btn plan-swap" aria-label="Swap from and to" title="Swap from and to">⇅ Swap</button>
+                        </div>
                         <datalist id="plan-to-list"></datalist>
                     </div>
                     <div class="when">
