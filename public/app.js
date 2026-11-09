@@ -967,9 +967,10 @@ function renderJourneys(res) {
 }
 
 function legsHtml(j) {
-    return j.legs.map((l) => {
+    return j.legs.map((l, i) => {
         if (l.kind === 'walk') {
-            return `<li class="leg walk"><span class="t"></span><span class="d">Walk about ${mins(l.minutes)}${l.to ? ` to ${placeName(l.to)}` : ` to ${placeName(plan.to, 'where you’re going')}`}</span></li>`;
+            const to = l.to ? `to ${placeName(l.to)}` : `to ${placeName(plan.to, 'where you’re going')}`;
+            return `<li class="leg walk" data-leg="${i}"><span class="t"></span><span class="d" data-to="${to}">Walk about ${mins(l.minutes)} ${to}</span></li>`;
         }
         const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
         const status = l.status === 'cancelled' || l.live ? statusHtml(l.status, l.statusText) : '<span class="muted">Timetable (no live data yet)</span>';
@@ -1002,7 +1003,19 @@ $('plan-results').addEventListener('click', (e) => {
     openPlanJourney(Number(card.dataset.i));
 });
 
-// Each ride's real stops come from the trip; walks are straight dotted lines
+// Walking path along real streets, from the server (which caches it). null -> keep the straight line.
+const walkCache = new Map();
+function streetWalk(a, b) {
+    const key = `${a.lat.toFixed(4)},${a.lng.toFixed(4)};${b.lat.toFixed(4)},${b.lng.toFixed(4)}`;
+    if (!walkCache.has(key)) {
+        walkCache.set(key, fetch(`/api/walk?from=${a.lat.toFixed(5)},${a.lng.toFixed(5)}&to=${b.lat.toFixed(5)},${b.lng.toFixed(5)}`)
+            .then((r) => (r.status === 200 ? r.json() : null))
+            .catch(() => null));
+    }
+    return walkCache.get(key);
+}
+
+// Each ride's real stops come from the trip; walks follow streets when the walking router answers
 async function drawPlan(j) {
     planShown = j;
     planLayer.clearLayers();
@@ -1024,8 +1037,17 @@ async function drawPlan(j) {
             const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? placeOf(plan.from);
             const b = l.to ?? placeOf(plan.to);
             if (a?.lat != null && b?.lat != null) {
-                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#3d4a43', weight: 4, dashArray: '0.1 8', lineCap: 'round' }).addTo(planLayer);
+                // Straight line first (faint), then the real path along streets when it arrives
+                const straight = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { ...planStyle, color: '#3d4a43', weight: 3, opacity: 0.45, dashArray: '2 7', lineCap: 'round' }).addTo(planLayer);
                 all.push([a.lat, a.lng], [b.lat, b.lng]);
+                streetWalk(a, b).then((route) => {
+                    if (!route || planShown !== j) return;
+                    planLayer.removeLayer(straight);
+                    L.polyline(route.points, { ...planStyle, color: '#ffffff', weight: 7, lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
+                    L.polyline(route.points, { ...planStyle, color: '#3d4a43', weight: 4, dashArray: '0.1 8', lineCap: 'round', lineJoin: 'round' }).addTo(planLayer);
+                    const row = document.querySelector(`.trip-card[aria-expanded="true"] .leg.walk[data-leg="${i}"] .d`);
+                    if (row) row.textContent = `Walk ${mins(Math.max(1, Math.round(route.secs / 60)))} (${route.metres < 1000 ? `${route.metres} m` : `${(route.metres / 1000).toFixed(1)} km`}) ${row.dataset.to}`;
+                });
             }
             return;
         }

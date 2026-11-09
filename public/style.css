@@ -528,3 +528,4 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .leaflet-plan-pane svg { filter: drop-shadow(0 1px 2px rgb(30 40 35 / 0.35)); }
 .plan-label { background: #fff; border: 0; border-radius: 8px; box-shadow: 0 1px 4px rgb(30 40 35 / 0.25); padding: 3px 8px; font-size: 0.78rem; font-weight: 800; color: #24312b; }
 .plan-label::before { display: none; }
+@media (max-width: 999px) { .tabs button { font-size: 0.78rem; } }

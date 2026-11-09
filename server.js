@@ -8,6 +8,8 @@ import { brisbaneClock, parseLocalTime, formatClock } from './schedule.js';
 import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
 import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX } from './landmarks.js';
+import { walkRoute } from './walk.js';
+import { distanceM } from './raptor.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
@@ -165,6 +167,26 @@ app.get('/api/stations', handle(async (req, res) => {
         .sort((a, b) => a.rank - b.rank || (a.s.modes === 'bus') - (b.s.modes === 'bus') || a.s.name.localeCompare(b.s.name))
         .slice(0, 20);
     res.json([...places, ...matches.slice(0, 20 - places.length).map(({ s }) => out(s))]);
+}));
+
+// Walking directions along streets for one walk of a journey: ?from=-27.62,152.91&to=-27.63,152.92
+// 204 when there's no street route (the page keeps its straight dotted line).
+const latLng = (text) => {
+    const [lat, lng] = String(text ?? '').split(',').map(Number);
+    return lat < -25 && lat > -29 && lng > 151 && lng < 154 ? { lat, lng } : null;
+};
+app.get('/api/walk', handle(async (req, res) => {
+    const from = latLng(req.query.from);
+    const to = latLng(req.query.to);
+    if (!from || !to) return res.status(400).json({ error: 'from and to must be lat,lng in South East Queensland' });
+    try {
+        const route = await walkRoute(from, to, { distanceM });
+        if (!route) return res.status(204).end();
+        res.set('Cache-Control', 'public, max-age=86400').json(route);
+    } catch (err) {
+        console.error('Walking route failed:', err.message);
+        res.status(204).end();
+    }
 }));
 
 // Journey planner: from a station or stop (or a position, "near me") to another, leaving at a time.
