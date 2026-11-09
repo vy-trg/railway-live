@@ -108,10 +108,41 @@ const SEQ_BOUNDS = L.latLngBounds([-28.6, 151.6], [-25.9, 154.0]);
 const map = L.map('map', { preferCanvas: true, zoomControl: false, maxBounds: SEQ_BOUNDS, maxBoundsViscosity: 0.6, minZoom: 8 })
     .setView([-27.5, 152.98], 10);
 L.control.zoom({ position: 'topleft' }).addTo(map);
+// The map credits stay on the map (OpenStreetMap asks for that); the page footer only links the code.
+// A plain "Leaflet" link instead of the flag keeps the line short enough for one line on a phone.
+map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
+
+// Full screen map: a button under the zoom. iPhone Safari has no full screen for a part of a page,
+// so the map box is pinned over the whole screen instead, and Esc or the button closes it.
+const FullMap = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+        const btn = L.DomUtil.create('button', 'full-btn');
+        btn.type = 'button';
+        btn.setAttribute('aria-pressed', 'false');
+        btn.setAttribute('aria-label', 'Full screen map');
+        btn.innerHTML = '<span aria-hidden="true">⤢</span>';
+        L.DomEvent.disableClickPropagation(btn);
+        L.DomEvent.on(btn, 'click', () => setFullMap(btn.getAttribute('aria-pressed') !== 'true'));
+        return btn;
+    },
+});
+const fullBtn = new FullMap().addTo(map).getContainer();
+function setFullMap(on) {
+    document.body.classList.toggle('map-full', on);
+    fullBtn.setAttribute('aria-pressed', String(on));
+    fullBtn.setAttribute('aria-label', on ? 'Close full screen map' : 'Full screen map');
+    fullBtn.innerHTML = `<span aria-hidden="true">${on ? '×' : '⤢'}</span>`;
+    // Leaflet has to measure the new size, after the browser has applied it
+    requestAnimationFrame(() => map.invalidateSize());
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.body.classList.contains('map-full')) setFullMap(false);
+});
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        + ' · <a href="https://translink.com.au/about-translink/open-data">TransLink</a> (CC BY 4.0)',
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        + ' · <a href="https://translink.com.au/about-translink/open-data">TransLink</a> CC BY 4.0',
 }).addTo(map);
 
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();

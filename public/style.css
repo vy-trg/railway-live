@@ -529,3 +529,20 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .plan-label { background: #fff; border: 0; border-radius: 8px; box-shadow: 0 1px 4px rgb(30 40 35 / 0.25); padding: 3px 8px; font-size: 0.78rem; font-weight: 800; color: #24312b; }
 .plan-label::before { display: none; }
 @media (max-width: 999px) { .tabs button { font-size: 0.78rem; } }
+
+/* Full screen map button, under the zoom buttons */
+.full-btn { width: 34px; height: 34px; border-radius: 10px; border: 0; background: var(--paper); box-shadow: var(--shadow); font-size: 1.1rem; font-weight: 800; color: var(--ink); cursor: pointer; }
+.full-btn[aria-pressed="true"] { background: var(--gum); color: #fff; }
+body.map-full { overflow: hidden; }
+body.map-full .map-wrap { position: fixed; inset: 0; z-index: 3000; border-radius: 0; margin: 0; height: 100dvh; }
+body.map-full #map { height: 100%; border-radius: 0; }
+body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
+.leaflet-control-attribution { font-size: 0.68rem; }
+
+/* Phones: tab names must not touch */
+@media (max-width: 999px) {
+    .tabs { gap: 0; }
+    .tabs button { font-size: 0.74rem; padding-inline: 0; }
+    .tabs::before { width: calc((100% - 8px) / 5); transform: translateX(calc(var(--tab, 0) * 100%)); }
+    .tabs .count { font-size: 0.62rem; min-width: 1.3em; }
+}
