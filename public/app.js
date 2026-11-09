@@ -62,7 +62,7 @@ const state = {
     place: params.get('place') || '', // free-text place, e.g. 'Springfield'
     mode: ['train', 'tram', 'ferry', 'bus'].includes(params.get('mode')) ? params.get('mode') : '', // '' = all
     station: params.get('station') || DEFAULT_STATION,
-    tab: ['trains', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
+    tab: ['trains', 'plan', 'board', 'alerts', 'stats'].includes(params.get('tab')) ? params.get('tab') : 'trains',
     at: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(params.get('at') ?? '') ? params.get('at') : '', // planned time, '' = now
     selected: null, // trip id of the train whose journey is open
 };
@@ -79,19 +79,22 @@ function saveUrl() {
 }
 
 // ---------- Tabs ----------
-const TABS = ['trains', 'board', 'alerts', 'stats'];
+const TABS = ['trains', 'plan', 'board', 'alerts', 'stats'];
 function showTab(name) {
     state.tab = name;
     for (const t of TABS) {
         $(`tab-${t}`).setAttribute('aria-selected', String(t === name));
         $(`view-${t}`).hidden = t !== name;
     }
-    // The highlight slides to the chosen tab (position 0 to 3)
+    // The highlight slides to the chosen tab (position 0 to 4)
     document.querySelector('.tabs').style.setProperty('--tab', TABS.indexOf(name));
     if (name === 'stats') loadStats();
     // The station pin belongs to the Departures tab
     if (name === 'board') showStationOnMap(stations.find((x) => x.id === state.station), false);
     else stationPin.clearLayers();
+    // The planned journey's line belongs to the Plan tab
+    if (name !== 'plan') planLayer.clearLayers();
+    else if (planShown) drawPlan(planShown);
     saveUrl();
 }
 for (const t of TABS) $(`tab-${t}`).addEventListener('click', () => showTab(t));
@@ -648,6 +651,252 @@ function pickStation(text) {
     loadBoard();
 }
 
+// ---------- Plan: from A to B, with changes ----------
+const planLayer = L.layerGroup().addTo(map);
+let planShown = null; // the journey drawn on the map
+const plan = { from: null, to: null, journeys: [] }; // from/to: { id, name } or { lat, lng, name }
+
+// Typing in From or To searches stations and stops, like the Departures box
+function stationSearchBox(inputId, listId) {
+    let timer = null;
+    $(inputId).addEventListener('input', (e) => {
+        clearTimeout(timer);
+        if (inputId === 'plan-from') $('plan-near').setAttribute('aria-pressed', 'false');
+        const q = e.target.value.trim();
+        if (q.length < 2) return;
+        timer = setTimeout(async () => {
+            try {
+                const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}`);
+                for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
+                $(listId).innerHTML = found.map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
+            } catch (err) {
+                console.error('Station search failed:', err);
+            }
+        }, 250);
+    });
+}
+stationSearchBox('plan-from', 'plan-from-list');
+stationSearchBox('plan-to', 'plan-to-list');
+
+// The station or stop typed in a box. Names from the list match exactly; a short name like
+// "Griffith University" matches when only one place has it. Several matches -> ask to pick.
+function findStation(text) {
+    const full = text.trim().toLowerCase();
+    if (!full) return { match: null };
+    const exact = stations.find((s) => s.name.toLowerCase() === full);
+    if (exact) return { match: exact };
+    const base = (name) => name.toLowerCase().replace(/ \(.*\)$/, '').replace(/ station$/, '');
+    const typed = base(full);
+    const same = stations.filter((s) => base(s.name) === typed);
+    if (same.length === 1) return { match: same[0] };
+    if (same.length > 1) return { match: null, several: same.map((s) => s.name) };
+    const starts = typed.length >= 3 ? stations.filter((s) => base(s.name).startsWith(typed)) : [];
+    if (starts.length === 1) return { match: starts[0] };
+    return { match: null, several: starts.length > 1 ? starts.slice(0, 3).map((s) => s.name) : null };
+}
+
+$('plan-near').addEventListener('click', () => {
+    const btn = $('plan-near');
+    if (!navigator.geolocation) {
+        planError('This browser can’t share your location. Type a station or stop instead.');
+        return;
+    }
+    btn.textContent = 'Finding you…';
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            btn.textContent = 'Near me';
+            btn.setAttribute('aria-pressed', 'true');
+            plan.from = { lat: pos.coords.latitude, lng: pos.coords.longitude, name: 'Near me' };
+            $('plan-from').value = 'Near me';
+            $('plan-error').hidden = true;
+        },
+        () => {
+            btn.textContent = 'Near me';
+            planError('We couldn’t get your location. Allow location for this site, or type a station or stop.');
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+});
+
+$('plan-swap').addEventListener('click', () => {
+    const from = $('plan-from').value;
+    $('plan-from').value = $('plan-to').value;
+    $('plan-to').value = from;
+    [plan.from, plan.to] = [plan.to, plan.from];
+    $('plan-near').setAttribute('aria-pressed', String(plan.from?.lat !== undefined));
+});
+
+function planError(text) {
+    $('plan-error').textContent = text;
+    $('plan-error').hidden = false;
+}
+
+function setupPlanWhen() {
+    const input = $('plan-when');
+    input.min = brisbaneNow();
+    input.max = new Date(Date.now() + (10 + 7 * 24) * 3600 * 1000).toISOString().slice(0, 16);
+    if (!input.value) input.value = brisbaneNow();
+}
+$('plan-chips').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-when]');
+    if (!btn) return;
+    const v = btn.dataset.when;
+    const nowLocal = Date.now() + 10 * 3600 * 1000;
+    let target;
+    if (v === 'tomorrow') target = `${new Date(nowLocal + 86400 * 1000).toISOString().slice(0, 10)}T07:00`;
+    else target = new Date(nowLocal + Number(v) * 60000).toISOString().slice(0, 16);
+    $('plan-when').value = target;
+    if (plan.from && plan.to) findJourneys();
+});
+
+$('plan-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    findJourneys();
+});
+
+const placeQuery = (prefix, p) => (p.lat !== undefined
+    ? `${prefix}Lat=${p.lat.toFixed(5)}&${prefix}Lng=${p.lng.toFixed(5)}`
+    : `${prefix}=${encodeURIComponent(p.id)}`);
+
+async function findJourneys() {
+    $('plan-error').hidden = true;
+    // Use what's typed now, unless From is "Near me"
+    if (!(plan.from?.lat !== undefined && $('plan-from').value === 'Near me')) {
+        const f = findStation($('plan-from').value);
+        if (f.several) return planError(`More than one place matches From: ${f.several.join(', ')}. Pick one from the list.`);
+        plan.from = f.match ? { id: f.match.id, name: f.match.name } : null;
+    }
+    const t = findStation($('plan-to').value);
+    if (t.several) return planError(`More than one place matches To: ${t.several.join(', ')}. Pick one from the list.`);
+    plan.to = t.match ? { id: t.match.id, name: t.match.name } : null;
+    if (!plan.from) return planError('Pick where you’re leaving from: start typing and choose from the list, or press Near me.');
+    if (!plan.to) return planError('Pick where you’re going: start typing and choose a station or stop from the list.');
+    if (plan.from.id && plan.from.id === plan.to.id) return planError('From and To are the same place.');
+    if (plan.from.id) $('plan-from').value = plan.from.name;
+    $('plan-to').value = plan.to.name;
+
+    const when = $('plan-when').value;
+    const at = when && when > brisbaneNow() ? `&at=${encodeURIComponent(when)}` : '';
+    const go = $('plan-go');
+    const list = $('plan-results');
+    go.disabled = true;
+    go.textContent = 'Finding journeys…';
+    list.setAttribute('aria-busy', 'true');
+    try {
+        const res = await getJson(`/api/plan?${placeQuery('from', plan.from)}&${placeQuery('to', plan.to)}${at}`);
+        plan.journeys = res.journeys;
+        $('plan-note').textContent = res.note ?? `${res.journeys.length} ${res.journeys.length === 1 ? 'journey' : 'journeys'} leaving from ${res.at}${res.planned ? ' (timetable; live delays show closer to the time)' : ', with live delays'}. Walks are estimates.`;
+        renderJourneys();
+        if (res.journeys.length) openPlanJourney(0);
+        else planLayer.clearLayers();
+    } catch (err) {
+        $('plan-note').textContent = '';
+        planError(err.message && !/^HTTP/.test(err.message) ? err.message : 'Journeys aren’t loading right now. Try again in a moment.');
+        console.error('Plan failed:', err);
+    } finally {
+        go.disabled = false;
+        go.textContent = 'Find journeys';
+        list.removeAttribute('aria-busy');
+    }
+}
+
+const CHANGE_TEXT = { make: 'Make it', tight: 'Tight change', miss: 'Likely to miss' };
+const legName = (l) => (l.mode === 'train' ? l.routeName.replace(/ line$/i, '') || 'Train' : `${l.mode === 'bus' ? 'Bus' : l.mode === 'tram' ? 'Tram' : 'Ferry'} ${l.routeShort}`);
+const placeName = (p, fallback) => escapeHtml((p?.name ?? fallback).replace(/ (station|ferry terminal)$/, ''));
+
+function renderJourneys() {
+    const list = $('plan-results');
+    list.innerHTML = plan.journeys.map((j, i) => {
+        const rides = j.legs.filter((l) => l.kind === 'ride');
+        const chain = rides.map((l) => `<span class="badge" style="--c:${escapeHtml(l.color)};--t:${escapeHtml(l.textColor)}">${escapeHtml(l.mode === 'train' ? 'Train' : l.routeShort)}</span>`).join('<span class="sep" aria-hidden="true">›</span>');
+        const flag = j.risky ? `<span class="trip-flag ${j.risky}">${j.risky === 'miss' ? 'A change may be missed' : 'Tight change'}</span>` : '';
+        return `<li class="trip-card" data-i="${i}" aria-expanded="false">
+          <button type="button" aria-label="${escapeHtml(`Leave ${j.leave}, arrive ${j.arrive}, ${j.minutes} minutes, ${j.changes} changes. Show details`)}">
+            <span class="trip-head"><span class="times">${escapeHtml(j.leave)} → ${escapeHtml(j.arrive)}${j.arriveExpected ? `<small>now ${escapeHtml(j.arriveExpected)}</small>` : ''}</span>
+              <span class="meta">${j.minutes} min · ${j.changes === 0 ? 'direct' : `${j.changes} change${j.changes > 1 ? 's' : ''}`}</span></span>
+            <span class="trip-chain">${chain}</span>${flag}
+          </button>
+          <ol class="legs" hidden></ol>
+        </li>`;
+    }).join('');
+}
+
+function legsHtml(j) {
+    return j.legs.map((l) => {
+        if (l.kind === 'walk') {
+            return `<li class="leg walk"><span class="t"></span><span class="d">Walk about ${l.minutes} min${l.to ? ` to ${placeName(l.to)}` : ' to where you’re going'}</span></li>`;
+        }
+        const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
+        return `<li class="leg" style="--c:${escapeHtml(l.color)}">
+          <span class="t">${escapeHtml(l.depart)}${l.departExpected ? `<small>now ${escapeHtml(l.departExpected)}</small>` : ''}</span>
+          <span class="d">${change}<b>${escapeHtml(legName(l))} to ${escapeHtml(l.headsign)}</b>
+            <span>From ${placeName(l.from)}${l.from?.platform ? `, platform ${escapeHtml(l.from.platform)}` : ''} · ${statusHtml(l.status, l.statusText)}</span>
+            <span>${l.stops} stop${l.stops === 1 ? '' : 's'} · get off at ${placeName(l.to)}, ${escapeHtml(l.arriveExpected ?? l.arrive)}</span></span>
+        </li>`;
+    }).join('');
+}
+
+function openPlanJourney(i) {
+    for (const card of $('plan-results').children) {
+        const open = Number(card.dataset.i) === i;
+        card.setAttribute('aria-expanded', String(open));
+        const legs = card.querySelector('.legs');
+        legs.hidden = !open;
+        if (open) legs.innerHTML = legsHtml(plan.journeys[i]);
+    }
+    drawPlan(plan.journeys[i]);
+}
+
+$('plan-results').addEventListener('click', (e) => {
+    const card = e.target.closest('.trip-card');
+    if (!card || !e.target.closest('button')) return;
+    openPlanJourney(Number(card.dataset.i));
+});
+
+// Each ride's real stops come from the trip; walks are straight dotted lines
+async function drawPlan(j) {
+    planShown = j;
+    planLayer.clearLayers();
+    journeyLayer.clearLayers();
+    const all = [];
+    const rides = await Promise.all(j.legs.map(async (l) => {
+        if (l.kind !== 'ride') return null;
+        try {
+            const trip = await getJson(`/api/trips/${encodeURIComponent(l.tripId)}`);
+            return trip.stops.filter((s) => s.sequence >= l.fromSeq && s.sequence <= l.toSeq && s.lat !== null);
+        } catch {
+            return [l.from, l.to].filter((s) => s?.lat != null);
+        }
+    }));
+    if (planShown !== j) return; // another journey was picked meanwhile
+    j.legs.forEach((l, i) => {
+        if (l.kind === 'walk') {
+            const a = l.from ?? (i > 0 ? j.legs[i - 1].to : null) ?? (plan.from?.lat !== undefined ? plan.from : null);
+            const b = l.to ?? (plan.to ? stations.find((s) => s.id === plan.to.id) : null);
+            if (a?.lat != null && b?.lat != null) {
+                L.polyline([[a.lat, a.lng], [b.lat, b.lng]], { color: '#6e7a72', weight: 3, dashArray: '2 6', interactive: false }).addTo(planLayer);
+                all.push([a.lat, a.lng], [b.lat, b.lng]);
+            }
+            return;
+        }
+        const pts = rides[i].map((s) => [s.lat, s.lng]);
+        if (pts.length < 2) return;
+        L.polyline(pts, { color: '#fffaf3', weight: 8, opacity: 0.95, interactive: false }).addTo(planLayer);
+        L.polyline(pts, { color: l.color, weight: 4, interactive: false }).addTo(planLayer);
+        for (const [k, s] of rides[i].entries()) {
+            const end = k === 0 || k === rides[i].length - 1;
+            L.circleMarker([s.lat, s.lng], { radius: end ? 6 : 3, weight: 2, color: l.color, fillColor: '#fffaf3', fillOpacity: 1 })
+                .bindTooltip(escapeHtml(s.name)).addTo(planLayer);
+        }
+        all.push(...pts);
+    });
+    if (plan.from?.lat !== undefined) {
+        L.circleMarker([plan.from.lat, plan.from.lng], { radius: 7, weight: 3, color: '#2f6b5a', fillColor: '#2f6b5a', fillOpacity: 1 })
+            .bindTooltip('You', { permanent: true, direction: 'right', offset: [8, 0], className: 'station-label' }).addTo(planLayer);
+    }
+    if (all.length) map.flyToBounds(all, { padding: [40, 40], maxZoom: 15, duration: reduceMotion() ? 0 : 0.8 });
+}
+
 // ---------- When: now, or a time up to 7 days ahead ----------
 // Brisbane has no daylight saving, so its time is always UTC+10
 function brisbaneNow() {
@@ -715,7 +964,7 @@ $('board').addEventListener('click', openDeparture);
 $('board').addEventListener('keydown', openDeparture);
 
 // Quick times: Now, +30 min, +1 hr, +3 hr, tomorrow 7 am (Brisbane time)
-document.querySelector('.when-chips').addEventListener('click', (e) => {
+$('when-chips').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-when]');
     if (!btn) return;
     const v = btn.dataset.when;
@@ -788,6 +1037,7 @@ async function loadAlerts() {
 // ---------- Start ----------
 async function start() {
     showTab(state.tab);
+    setupPlanWhen();
     drawTracks();
     try {
         await Promise.all([loadLines(), loadStations()]);

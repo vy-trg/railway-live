@@ -6,6 +6,7 @@ import { buildLines } from './lines.js';
 import { enrichTrains, nextStop, summarize, buildBoard, railAlerts, buildTripProgress } from './live.js';
 import { brisbaneClock, parseLocalTime, formatClock } from './schedule.js';
 import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
+import { plan, describeJourney, getNetwork } from './planner.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
@@ -140,7 +141,8 @@ app.get('/api/lines', handle(async (req, res) => {
 
 // Stations for the picker. Without ?q: train stations, tram stops and ferry terminals (about 250).
 // With ?q=…: also search over 12,000 bus stops by name or stop number, best matches first, at most 20.
-const stationLabel = (s) => (s.modes === 'bus' ? `${s.name} (stop ${s.id})` : s.name.replace(/ station$/, ''));
+// Bus stops show their stop number (printed on the sign); busway stations (ids like place_grunbs) say busway
+const stationLabel = (s) => (s.modes === 'bus' ? `${s.name} (${s.id.startsWith('place_') ? 'busway' : `stop ${s.id}`})` : s.name.replace(/ station$/, ''));
 app.get('/api/stations', handle(async (req, res) => {
     const { stations, mainStations } = await getStatic();
     const q = String(req.query.q ?? '').trim().toLowerCase();
@@ -160,6 +162,66 @@ app.get('/api/stations', handle(async (req, res) => {
 }));
 
 // Next departures from one station for the next 2 hours: timetable + live delays
+// Journey planner: from a station or stop (or a position, "near me") to another, leaving at a time.
+// ?from=place_spcsta or ?fromLat=-27.6&fromLng=152.9, the same for to, and optional ?at=2026-11-10T07:30
+const placeFrom = (q, prefix, stationIds) => {
+    const lat = Number(q[`${prefix}Lat`]);
+    const lng = Number(q[`${prefix}Lng`]);
+    if (q[`${prefix}Lat`] !== undefined) {
+        // Roughly South East Queensland, so a typo can't send the planner across the world
+        if (!(lat < -25 && lat > -29 && lng > 151 && lng < 154)) return null;
+        return { lat, lng };
+    }
+    const id = String(q[prefix] ?? '');
+    return stationIds.has(id) ? { stationId: id } : null;
+};
+
+app.get('/api/plan', handle(async (req, res) => {
+    const { stationIds } = await getStatic();
+    const from = placeFrom(req.query, 'from', stationIds);
+    const to = placeFrom(req.query, 'to', stationIds);
+    if (!from) return res.status(400).json({ error: 'Pick where you are leaving from' });
+    if (!to) return res.status(400).json({ error: 'Pick where you are going' });
+    if (from.stationId && from.stationId === to.stationId) return res.status(400).json({ error: 'From and to are the same place' });
+
+    const now = await nowSec();
+    let date;
+    let secs;
+    if (req.query.at !== undefined) {
+        const at = parseLocalTime(String(req.query.at));
+        if (!at) return res.status(400).json({ error: 'Pick a date and time' });
+        if (at.epoch < now - 3600 || at.epoch > now + 7 * 86400) {
+            return res.status(400).json({ error: 'Pick a time between now and 7 days ahead' });
+        }
+        ({ date, secs } = at);
+    } else {
+        ({ date, secs } = brisbaneClock(now));
+    }
+
+    const result = await plan(from, to, date, secs);
+    if (result.error === 'from') return res.json({ journeys: [], note: 'No stop within 800 m of where you are' });
+    if (result.error === 'to') return res.json({ journeys: [], note: 'No stop within 800 m of where you are going' });
+
+    const tripIds = [...new Set(result.journeys.flatMap((j) => j.legs.filter((l) => l.kind === 'ride').map((l) => l.tripId)))];
+    const trips = await db.getTrips(tripIds);
+    // Live delays: trains, trams and ferries always; buses only when a journey uses one
+    const hasBus = [...trips.values()].some((t) => t.mode === 'bus');
+    const [main, bus] = await Promise.all([
+        getTripUpdates().catch(() => null),
+        hasBus ? getBusTripUpdates().catch(() => null) : null,
+    ]);
+    const updates = new Map([...(main?.data ?? []), ...(bus?.data ?? [])]);
+
+    res.json({
+        date,
+        at: formatClock(secs),
+        planned: req.query.at !== undefined,
+        stale: Boolean(main?.stale || bus?.stale),
+        journeys: result.journeys.map((j) => describeJourney(j, result.stops, result.patterns, trips, updates)),
+        note: result.journeys.length === 0 ? 'No journey found in the next few hours' : null,
+    });
+}));
+
 app.get('/api/departures', handle(async (req, res) => {
     const { stationIds } = await getStatic();
     const station = String(req.query.station ?? '');
@@ -323,4 +385,6 @@ app.get('/api/alerts', handle(async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Railway Live running on http://localhost:${PORT}`);
+    // Load the journey planner's timetable now, so the first person to plan doesn't wait for it
+    if (process.env.NODE_ENV !== 'test') getNetwork().catch((err) => console.error('Planner not loaded yet:', err.message));
 });

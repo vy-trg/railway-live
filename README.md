@@ -200,6 +200,10 @@ compose.yaml       Runs the app in Docker locally
 Train data: [TransLink GTFS-RT](https://translink.com.au/about-translink/open-data), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 Map tiles: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
 
+## Journey planner
+
+The **Plan** tab finds journeys from one station or stop (or *Near me*) to another, with changes, using RAPTOR on the timetable and live delays on each vehicle. Each change says *Make it*, *Tight* or *Likely to miss*. Details, measurements and limits: [docs/planner.md](docs/planner.md).
+
 ## What is and isn't included
 
 Everything in TransLink's SEQ timetable is loaded: every route_type in `SEQ_GTFS.zip` (bus, train, tram, ferry), every trip and every stop where passengers can get on or off. The exceptions, on purpose:

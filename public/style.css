@@ -342,7 +342,7 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .tabs { position: relative; isolation: isolate; }
 .tabs::before {
     content: ""; position: absolute; z-index: -1; top: 4px; bottom: 4px; left: 4px;
-    width: calc((100% - 8px - 12px) / 4); border-radius: 999px; background: var(--paper);
+    width: calc((100% - 8px - 16px) / 5); border-radius: 999px; background: var(--paper);
     transform: translateX(calc(var(--tab, 0) * (100% + 4px)));
     transition: transform 260ms var(--ease-in-out);
 }
@@ -456,3 +456,39 @@ select { width: 100%; background: var(--paper); padding: 11px 12px; border-radiu
 .board li[data-trip]:hover, .board li.selected { background: color-mix(in srgb, var(--gum) 10%, var(--paper)); }
 .board li[data-trip]:focus-visible { outline: 2px solid var(--gum); outline-offset: -2px; }
 .leaflet-tooltip.station-label { font-weight: 800; }
+
+/* Plan: from, to, when, then journeys */
+.plan-form { display: grid; gap: 10px; position: relative; }
+.plan-place { display: grid; gap: 4px; }
+.plan-place small { font-size: 0.75rem; }
+.plan-row { display: flex; gap: 8px; }
+.plan-row .station-input { flex: 1; min-width: 0; }
+.chip-btn { border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 0 14px; font-weight: 800; font-size: 0.85rem; color: var(--gum); cursor: pointer; white-space: nowrap; }
+.chip-btn[aria-pressed="true"] { background: var(--gum); color: #fff; border-color: var(--gum); }
+.plan-swap { justify-self: end; margin: -6px 0; }
+.primary-btn { border: 0; border-radius: 14px; padding: 12px 16px; background: var(--gum); color: #fff; font-weight: 800; cursor: pointer; }
+.primary-btn:disabled { opacity: 0.6; cursor: progress; }
+.plan-results { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.trip-card { background: var(--paper); border-radius: 14px; border: 2px solid transparent; }
+.trip-card[aria-expanded="true"], .trip-card.selected { border-color: var(--gum); }
+.trip-card > button { all: unset; box-sizing: border-box; display: grid; gap: 6px; width: 100%; padding: 12px 14px; cursor: pointer; }
+.trip-card > button:focus-visible { outline: 2px solid var(--gum); outline-offset: 2px; border-radius: 12px; }
+.trip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.trip-head .times { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.02em; }
+.trip-head .times small { font-size: 0.8rem; font-weight: 700; color: var(--late); margin-left: 4px; }
+.trip-head .meta { font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
+.trip-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+.trip-chain .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-weight: 800; background: var(--c); color: var(--t); }
+.trip-chain .sep { opacity: 0.6; }
+.trip-flag { font-size: 0.8rem; font-weight: 800; }
+.trip-flag.tight { color: var(--late); } .trip-flag.miss { color: var(--verylate); }
+.legs { list-style: none; margin: 0; padding: 0 14px 12px; display: grid; gap: 10px; }
+.leg { display: grid; grid-template-columns: 4.8ch 1fr; gap: 10px; font-size: 0.9rem; }
+.leg .t { font-weight: 800; }
+.leg .t small { display: block; font-size: 0.72rem; color: var(--late); }
+.leg .d { border-left: 4px solid var(--c, var(--line)); padding-left: 10px; display: grid; gap: 2px; }
+.leg.walk .d { border-left-style: dotted; color: var(--muted); }
+.leg .d b { font-weight: 800; }
+.leg .d span { font-size: 0.8rem; color: var(--muted); }
+.change { font-size: 0.8rem; font-weight: 800; }
+.change.make { color: var(--ontime); } .change.tight { color: var(--late); } .change.miss { color: var(--verylate); }

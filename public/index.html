@@ -56,6 +56,7 @@
         <aside class="panel">
             <nav class="tabs" role="tablist" aria-label="Sections">
                 <button role="tab" id="tab-trains" aria-controls="view-trains" aria-selected="true" type="button">Live</button>
+                <button role="tab" id="tab-plan" aria-controls="view-plan" aria-selected="false" type="button">Plan</button>
                 <button role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" type="button">Departures</button>
                 <button role="tab" id="tab-alerts" aria-controls="view-alerts" aria-selected="false" type="button">Alerts <span id="alerts-count" class="count"></span></button>
                 <button role="tab" id="tab-stats" aria-controls="view-stats" aria-selected="false" type="button">Stats</button>
@@ -83,6 +84,41 @@
                 <ul id="train-list" class="train-list" aria-busy="true"><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li><li class="skeleton-row" aria-hidden="true"></li></ul>
             </section>
 
+            <!-- Journey planner: from one place to another, with changes -->
+            <section id="view-plan" class="view" role="tabpanel" aria-labelledby="tab-plan" hidden>
+                <form id="plan-form" class="plan-form" novalidate>
+                    <div class="plan-place">
+                        <label class="field-label" for="plan-from">From</label>
+                        <div class="plan-row">
+                            <input id="plan-from" class="station-input" list="plan-from-list" autocomplete="off" placeholder="Station or stop, e.g. Springfield Central">
+                            <button id="plan-near" type="button" class="chip-btn" aria-describedby="plan-near-hint">Near me</button>
+                        </div>
+                        <datalist id="plan-from-list"></datalist>
+                        <small id="plan-near-hint" class="muted">Uses your location once, to find stops within 800 m. It isn’t saved.</small>
+                    </div>
+                    <button id="plan-swap" type="button" class="icon-btn plan-swap" aria-label="Swap from and to">⇅</button>
+                    <div class="plan-place">
+                        <label class="field-label" for="plan-to">To</label>
+                        <input id="plan-to" class="station-input" list="plan-to-list" autocomplete="off" placeholder="Station or stop, e.g. Griffith University">
+                        <datalist id="plan-to-list"></datalist>
+                    </div>
+                    <div class="when">
+                        <label class="field-label" for="plan-when">Leaving</label>
+                        <input id="plan-when" class="station-input" type="datetime-local" step="300">
+                    </div>
+                    <div class="when-chips" id="plan-chips" role="group" aria-label="Quick times">
+                        <button type="button" data-when="0">Now</button>
+                        <button type="button" data-when="30">+30 min</button>
+                        <button type="button" data-when="60">+1 hr</button>
+                        <button type="button" data-when="tomorrow">Tomorrow 7 am</button>
+                    </div>
+                    <p id="plan-error" class="field-error" role="alert" hidden></p>
+                    <button id="plan-go" type="submit" class="primary-btn">Find journeys</button>
+                </form>
+                <p id="plan-note" class="filter-note" role="status"></p>
+                <ol id="plan-results" class="plan-results"></ol>
+            </section>
+
             <!-- Next trains from one station -->
             <section id="view-board" class="view" role="tabpanel" aria-labelledby="tab-board" hidden>
                 <!-- Type to search or scroll the list: 154 stations is too many for a plain dropdown -->
@@ -97,7 +133,7 @@
                     <button id="when-now" type="button" class="link-btn" hidden>Back to now</button>
                 </div>
                 <!-- One tap to look later, without opening the date picker -->
-                <div class="when-chips" role="group" aria-label="Quick times">
+                <div class="when-chips" id="when-chips" role="group" aria-label="Quick times">
                     <button type="button" data-when="0">Now</button>
                     <button type="button" data-when="30">+30 min</button>
                     <button type="button" data-when="60">+1 hr</button>
