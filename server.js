@@ -4,11 +4,12 @@ import { getVehicles, getTripUpdates, getBusVehicles, getBusTripUpdates, getAler
 import * as db from './db/queries.js';
 import { buildLines } from './lines.js';
 import { enrichTrains, nextStop, summarize, buildBoard, railAlerts, buildTripProgress } from './live.js';
-import { brisbaneClock, parseLocalTime, formatClock } from './schedule.js';
+import { brisbaneClock, parseLocalTime, formatClock, delayAtStop } from './schedule.js';
 import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
 import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX } from './landmarks.js';
 import { walkRoute, roadPath } from './walk.js';
+import { CHANGES, planConnection, formatSecs } from './connection.js';
 import { distanceM, EXTRA_CHANGE_SECS } from './raptor.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -167,6 +168,67 @@ app.get('/api/stations', handle(async (req, res) => {
         .sort((a, b) => a.rank - b.rank || (a.s.modes === 'bus') - (b.s.modes === 'bus') || a.s.name.localeCompare(b.s.name))
         .slice(0, 20);
     res.json([...places, ...matches.slice(0, 20 - places.length).map(({ s }) => out(s))]);
+}));
+
+// Train + bus: will I make the connection?
+// GET /api/connection?trip=<train trip id>&via=sherwood|roma
+// Works out when the train really reaches the change station (timetable + live delay), adds the walk,
+// and checks the next buses on the route from there (with their own live delays): Make it / Tight / Miss,
+// the bus to catch and the one after. Rules and tests: connection.js and docs/connections.md.
+app.get('/api/connection', handle(async (req, res) => {
+    const change = CHANGES[String(req.query.via ?? '')];
+    if (!change) return res.status(400).json({ error: 'via must be one of: ' + Object.keys(CHANGES).join(', ') });
+    const tripId = String(req.query.trip ?? '');
+    const stops = await db.getTripStops(tripId);
+    if (stops.length === 0) return res.status(404).json({ error: 'No trip with that id' });
+    const at = stops.find((s) => s.station_id === change.stationId);
+    if (!at) return res.status(400).json({ error: `This trip doesn't stop at ${change.name}` });
+
+    const [main, bus, now] = await Promise.all([getTripUpdates(), getBusTripUpdates().catch(() => null), nowSec()]);
+    const trainDelay = delayAtStop(main.data.get(tripId), at.stop_sequence).delay;
+    const train = { arrivalSecs: at.arrival_secs, delaySecs: trainDelay ?? 0 };
+    const ready = train.arrivalSecs + train.delaySecs + change.walkSecs;
+
+    // Buses on the route from the change stop, from 10 minutes before you're ready to 90 minutes after
+    const { date } = brisbaneClock(now);
+    const rows = (await db.getDepartures(change.fromStop, date, ready - 600, ready + 5400, 40))
+        .filter((r) => r.short_name === change.route);
+    const buses = rows.map((r) => ({
+        tripId: r.trip_id,
+        departSecs: r.secs,
+        delaySecs: bus ? delayAtStop(bus.data.get(r.trip_id), r.stop_sequence).delay ?? 0 : 0,
+        live: Boolean(bus?.data.get(r.trip_id)),
+    }));
+    const live = new Map(buses.map((b) => [b.tripId, b.live]));
+    const p = planConnection(train, change.walkSecs, buses);
+    const out = (o) => o && {
+        tripId: o.tripId,
+        leaves: formatSecs(o.leavesSecs),
+        scheduled: formatSecs(o.scheduledSecs),
+        delaySecs: o.delaySecs,
+        spareMins: Math.round(o.spareSecs / 60),
+        status: o.status,
+        live: live.get(o.tripId) ?? false,
+    };
+    res.json({
+        via: change.name,
+        route: change.route,
+        train: {
+            tripId,
+            arrives: formatSecs(train.arrivalSecs + train.delaySecs),
+            scheduled: formatSecs(train.arrivalSecs),
+            delaySecs: trainDelay,
+            platform: at.platform,
+        },
+        walkMins: Math.round(change.walkSecs / 60),
+        ready: formatSecs(p.readySecs),
+        verdict: p.verdict,
+        planned: out(p.planned),
+        catch: out(p.catch),
+        next: out(p.next),
+        waitMins: p.waitSecs === null ? null : Math.round(p.waitSecs / 60),
+        busLive: Boolean(bus),
+    });
 }));
 
 // Walking directions along streets for one walk of a journey: ?from=-27.62,152.91&to=-27.63,152.92
