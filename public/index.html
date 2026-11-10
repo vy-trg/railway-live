@@ -44,6 +44,14 @@
         </section>
 
         <aside class="panel">
+            <nav class="tabs" role="tablist" aria-label="Sections">
+                <button role="tab" id="tab-trains" aria-controls="view-trains" aria-selected="true" type="button">Live</button>
+                <button role="tab" id="tab-plan" aria-controls="view-plan" aria-selected="false" type="button">Plan</button>
+                <button role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" type="button">Departures</button>
+                <button role="tab" id="tab-alerts" aria-controls="view-alerts" aria-selected="false" type="button">Alerts <span id="alerts-count" class="count"></span></button>
+                <button role="tab" id="tab-stats" aria-controls="view-stats" aria-selected="false" type="button">Stats</button>
+            </nav>
+
             <!-- One trip's stops, shown when a train or bus is picked. On a computer it takes the panel's place
                  (the map stays clear); on a phone it's a sheet at the bottom that you pull up or down. -->
             <article id="journey" class="journey" hidden aria-labelledby="journey-title" data-expanded="false">
@@ -60,13 +68,6 @@
                 </div>
             </article>
 
-            <nav class="tabs" role="tablist" aria-label="Sections">
-                <button role="tab" id="tab-trains" aria-controls="view-trains" aria-selected="true" type="button">Live</button>
-                <button role="tab" id="tab-plan" aria-controls="view-plan" aria-selected="false" type="button">Plan</button>
-                <button role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" type="button">Departures</button>
-                <button role="tab" id="tab-alerts" aria-controls="view-alerts" aria-selected="false" type="button">Alerts <span id="alerts-count" class="count"></span></button>
-                <button role="tab" id="tab-stats" aria-controls="view-stats" aria-selected="false" type="button">Stats</button>
-            </nav>
 
             <!-- Trains: network numbers, line filter, list of trains -->
             <section id="view-trains" class="view" role="tabpanel" aria-labelledby="tab-trains">

@@ -65,8 +65,27 @@ flowchart LR
 |---|---|
 | Mon 9 Nov | This page: problem, change points, route ids, walking estimates, diagram |
 | Tue 10 Nov | ~~Load 598 and M1 timetables~~ Done early in PR #14: every SEQ bus is loaded (598: 292 trips, M1: 1,292 trips; whole database 64 MB with trip patterns). Brought Wednesday's `connection.js` forward instead |
-| Wed 11 Nov | ~~`connection.js`~~ done on Tue (13 tests). Wednesday: bus departures from the change stop out of the timetable (query + tests) |
+| Wed 11 Nov | ~~`connection.js`~~ done on Tue (13 tests). Wednesday: `GET /api/connection?trip=…&via=sherwood\|roma` (Thursday's item, brought forward): train's live arrival + walk, then the 598 or M1 departures from the change stop with their live delays; returns Make it / Tight / Miss, the bus to catch and the one after |
 | Thu 12 Nov | Live bus delays from TripUpdates/Bus (two routes only); `GET /api/connection` |
 | Fri 13 Nov | Connection view on the phone |
 | Sat 14 Nov | Make-it rate by hour from the recorded delays |
 | Sun 15 Nov | "Be at Nathan by…" suggestion; README; demo |
+
+## API
+
+`GET /api/connection?trip=<train trip id>&via=sherwood|roma`
+
+```json
+{
+  "via": "Sherwood", "route": "598",
+  "train": { "arrives": "7:22 am", "scheduled": "7:22 am", "delaySecs": null, "platform": "2" },
+  "walkMins": 3, "ready": "7:25 am",
+  "verdict": "make",
+  "catch": { "leaves": "8:22 am", "spareMins": 57, "status": "make", "live": false },
+  "next": null, "waitMins": 57, "busLive": false
+}
+```
+
+- `verdict` is about the bus you were aiming for (the first one after the train is due on time); `catch` is the one you'll actually get.
+- `live: false` on a bus means TransLink has no prediction for it yet (it hasn't started its trip), so its time is the timetable.
+- Limit: the train trip is assumed to run today (Brisbane date). A trip id from another day gives that day's times on today's date.
