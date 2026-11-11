@@ -593,3 +593,13 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .access { display: grid; gap: 4px; margin-top: 6px; }
 .access small { font-size: 0.75rem; }
 .leg.walk.bike .d, .leg.walk.car .d { color: var(--ink); font-weight: 700; }
+
+/* Will I make my bus? (train + bus) */
+.connect { display: grid; gap: 8px; padding: 12px; margin: 4px 0 12px; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); }
+.connect h3 { margin: 0; font-size: 0.92rem; }
+.connect .seg { flex-wrap: wrap; }
+.verdict { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; border-left: 6px solid var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); }
+.verdict b { font-size: 1.05rem; color: var(--c); }
+.verdict span { font-size: 0.85rem; }
+.verdict small { font-size: 0.75rem; color: var(--muted); }
+.verdict.make { --c: var(--ontime); } .verdict.tight { --c: var(--late); } .verdict.miss, .verdict.none { --c: var(--verylate); }

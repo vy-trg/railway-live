@@ -225,3 +225,9 @@ export async function getTripShapes(tripIds) {
   );
   return new Map(rows.map((r) => [r.trip_id, r.coords]));
 }
+
+// The station a stop belongs to (bus stops at a busway station share it with the other platforms)
+export async function getStationOfStop(stopId) {
+  const { rows } = await pool.query('SELECT station_id FROM stops WHERE stop_id = $1', [stopId]);
+  return rows[0]?.station_id ?? null;
+}

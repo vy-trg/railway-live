@@ -89,3 +89,9 @@ flowchart LR
 - `verdict` is about the bus you were aiming for (the first one after the train is due on time); `catch` is the one you'll actually get.
 - `live: false` on a bus means TransLink has no prediction for it yet (it hasn't started its trip), so its time is the timetable.
 - Limit: the train trip is assumed to run today (Brisbane date). A trip id from another day gives that day's times on today's date.
+
+## On the page (day 4)
+
+Open any train that still has Sherwood or Roma Street ahead (Live or Departures). Under the title: **Catching a bus after this train?** with *598 at Sherwood* and *M1 at Roma Street*. Pick one: **Make it / Tight / Likely to miss it / No more buses**, in words and colour, the train's arrival (and how late), the walk, the bus to catch with minutes to spare, and the one after. It refreshes with the trip every 30 seconds.
+
+Fix found while building it: Roma Street's M1 platform (10792) belongs to the busway station (place_rompl), so looking it up as a station found nothing. The API now asks for the station of the stop and keeps only that platform.
