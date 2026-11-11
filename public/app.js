@@ -709,7 +709,8 @@ $('station-input').addEventListener('input', (e) => {
     if (q.length < 2) return;
     stationSearch = setTimeout(async () => {
         try {
-            const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}&places=1`);
+            // Stations and stops only: a campus or airport has no departures board of its own
+            const found = await getJson(`/api/stations?q=${encodeURIComponent(q)}`);
             for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
             $('station-list').innerHTML = found.concat(stations.filter((s) => !found.includes(s)).slice(0, 300))
                 .map((s) => `<option value="${escapeHtml(s.name)}"></option>`).join('');
@@ -730,10 +731,18 @@ function showStationOnMap(station, fly) {
     if (fly) map.flyTo([station.lat, station.lng], Math.max(map.getZoom(), 14), { duration: reduceMotion() ? 0 : 0.6 });
 }
 
-function pickStation(text) {
+async function pickStation(text) {
     const typed = text.trim().toLowerCase().replace(/ station$/, '');
-    const match = stations.find((s) => s.name.toLowerCase() === typed)
+    const local = () => stations.find((s) => s.name.toLowerCase() === typed)
         ?? (typed.length >= 3 ? stations.find((s) => s.name.toLowerCase().startsWith(typed)) : null);
+    let match = local();
+    // Enter pressed before the bus-stop search came back (or a stop number typed): ask the server now
+    if (!match && typed.length >= 2) {
+        clearTimeout(stationSearch);
+        const found = await getJson(`/api/stations?q=${encodeURIComponent(text.trim())}`).catch(() => []);
+        for (const s of found) if (!stations.some((x) => x.id === s.id)) stations.push(s);
+        match = local() ?? found[0] ?? null;
+    }
     const error = $('station-error');
     if (!match) {
         // Say what to do, don't blame the typing
@@ -1253,8 +1262,8 @@ async function loadBoard() {
         board.removeAttribute('aria-busy');
         if (departures.length === 0) {
             board.innerHTML = at
-                ? '<li class="empty">No trains from here in the 3 hours after that time. Try an earlier time or another station.</li>'
-                : '<li class="empty">No trains from here in the next 2 hours. Services may have finished for the night; try another station or plan ahead above.</li>';
+                ? '<li class="empty">Nothing leaves from here in the 3 hours after that time. Try an earlier time, or another station or stop (some stops are only where buses finish).</li>'
+                : '<li class="empty">Nothing leaves from here in the next 2 hours. Services may have finished for the night, or buses only finish at this stop; try another station or stop, or plan ahead above.</li>';
             return;
         }
         board.innerHTML = departures.map((d) => `
