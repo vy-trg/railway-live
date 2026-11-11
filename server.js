@@ -63,6 +63,9 @@ async function getStatic() {
             busRoutes,
             // Trains, tram and ferries only: the station list, the alerts and the stats stay as they were
             mainStations: stations.filter((s) => s.modes.split(',').some((m) => m && m !== 'bus')),
+            // The list shown before you type: every train, tram and ferry station plus the busway stations
+            // and bus interchanges (Cultural Centre, Roma Street busway...). The 12,000 street stops come up as you type.
+            listStations: stations.filter((s) => s.id.startsWith('place_') || s.modes.split(',').some((m) => m && m !== 'bus')),
             mainRouteIds: new Set(routes.filter((r) => r.mode !== 'bus').map((r) => r.route_id)),
             mainLines: lines.filter((l) => l.mode !== 'bus'),
         };
@@ -147,16 +150,21 @@ app.get('/api/lines', handle(async (req, res) => {
 // Stations for the picker. Without ?q: train stations, tram stops and ferry terminals (about 250).
 // With ?q=…: also search over 12,000 bus stops by name or stop number, best matches first, at most 20.
 // Bus stops show their stop number (printed on the sign); busway stations (ids like place_grunbs) say busway
-const stationLabel = (s) => (s.modes === 'bus' ? `${s.name} (${s.id.startsWith('place_') ? 'busway' : `stop ${s.id}`})` : s.name.replace(/ station$/, ''));
+// "Cultural Centre station (bus)", "Boggo Road busway station", "Mains Rd at Nathan (stop 1234)"
+const stationLabel = (s) => {
+    if (s.modes !== 'bus') return s.name.replace(/ station$/, '');
+    if (!s.id.startsWith('place_')) return `${s.name} (stop ${s.id})`;
+    return /busway|bus station|interchange/i.test(s.name) ? s.name : `${s.name} (bus)`;
+};
 app.get('/api/stations', handle(async (req, res) => {
-    const { stations, mainStations, landmarks } = await getStatic();
+    const { stations, listStations, landmarks } = await getStatic();
     const q = String(req.query.q ?? '').trim().toLowerCase();
     // ?places=1 (the Plan tab): campuses and airports come first, like a map search
     const places = req.query.places === '1' && q.length >= 2
         ? matchLandmarks(landmarks, q).map(({ id, name, modes, lat, lng }) => ({ id, name, modes, lat, lng }))
         : [];
     const out = (s) => ({ id: s.id, name: stationLabel(s), modes: s.modes, lat: s.lat, lng: s.lng });
-    if (!q) return res.json(mainStations.map(out));
+    if (!q) return res.json(listStations.map(out));
     if (q.length < 2) return res.status(400).json({ error: 'Type at least 2 letters' });
     const matches = stations
         .map((s) => {
@@ -385,8 +393,14 @@ app.get('/api/departures', handle(async (req, res) => {
     }
 
     const clock = brisbaneClock(now);
-    // Look back 30 minutes so late trains that haven't left yet still show
-    const rows = await db.getDepartures(station, clock.date, clock.secs - 1800, clock.secs + 7200, 40);
+    // The next 2 hours, plus anything from the last 30 minutes that the live feed says is running late
+    // (it may not have left yet). Asked for separately: at a busy bus station, 40 buses that already
+    // left in the last 30 minutes would otherwise fill the list and leave nothing to show.
+    const [upcoming, recent] = await Promise.all([
+        db.getDepartures(station, clock.date, clock.secs, clock.secs + 7200, 40),
+        db.getDepartures(station, clock.date, clock.secs - 1800, clock.secs - 1, 400),
+    ]);
+    const rows = [...recent.filter((r) => updates.data.has(r.trip_id)), ...upcoming];
     // Where each of those trains is right now (if it has started its trip)
     const tripIds = new Set(rows.map((r) => r.trip_id));
     const running = vehicles.data.filter((v) => tripIds.has(v.tripId));
