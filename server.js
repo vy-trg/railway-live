@@ -191,8 +191,13 @@ app.get('/api/connection', handle(async (req, res) => {
 
     // Buses on the route from the change stop, from 10 minutes before you're ready to 90 minutes after
     const { date } = brisbaneClock(now);
-    const rows = (await db.getDepartures(change.fromStop, date, ready - 600, ready + 5400, 40))
-        .filter((r) => r.short_name === change.route);
+    // Departures are looked up by station; a busway platform like 10792 belongs to the busway station,
+    // so ask for that station and keep only the platform where this route leaves from
+    const station = await db.getStationOfStop(change.fromStop);
+    const rows = station
+        ? (await db.getDepartures(station, date, ready - 600, ready + 5400, 80))
+            .filter((r) => r.short_name === change.route && r.stop_id === change.fromStop)
+        : [];
     const buses = rows.map((r) => ({
         tripId: r.trip_id,
         departSecs: r.secs,

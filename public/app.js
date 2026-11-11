@@ -474,6 +474,71 @@ function drawJourney(j) {
     else focusBounds(line, 14);
 }
 
+
+// ---------- Will I make my bus? (train + bus, docs/connections.md) ----------
+// Shown on any train that still has Sherwood or Roma Street ahead (Springfield and Ipswich line
+// trains both stop at Sherwood; every inbound train stops at Roma Street).
+// The answer comes from GET /api/connection and refreshes with the trip (every 30 seconds).
+const CONNECT_AT = { sherwood: /^Sherwood\b/, roma: /^Roma Street\b/ };
+const VERDICT = {
+    make: ['Make it', 'You get there with time to spare.'],
+    tight: ['Tight', 'Less than 3 minutes to spare: walk briskly.'],
+    miss: ['Likely to miss it', 'The train is too late for this bus.'],
+    none: ['No more buses', 'Nothing on this route in the next 90 minutes.'],
+};
+let connectVia = null;
+let connectTrip = null;
+
+function updateConnect(j) {
+    const box = $('connect');
+    const ahead = j.stops.filter((s) => s.state !== 'passed');
+    const options = j.mode === 'train'
+        ? Object.keys(CONNECT_AT).filter((via) => ahead.some((s) => CONNECT_AT[via].test(s.name)))
+        : [];
+    if (j.tripId !== connectTrip) { connectTrip = j.tripId; connectVia = null; $('connect-out').innerHTML = ''; }
+    box.hidden = options.length === 0;
+    if (box.hidden) return;
+    for (const b of $('connect-seg').querySelectorAll('button')) {
+        b.hidden = !options.includes(b.dataset.via);
+        b.setAttribute('aria-pressed', String(b.dataset.via === connectVia));
+    }
+    if (connectVia && options.includes(connectVia)) loadConnect();
+}
+
+async function loadConnect() {
+    const out = $('connect-out');
+    const tripId = connectTrip;
+    try {
+        const c = await getJson(`/api/connection?trip=${encodeURIComponent(tripId)}&via=${connectVia}`);
+        if (tripId !== connectTrip) return;
+        const [title, why] = VERDICT[c.verdict] ?? VERDICT.none;
+        const trainLate = c.train.delaySecs !== null && c.train.delaySecs >= 60;
+        const bus = c.catch;
+        const busLine = bus
+            ? `${c.verdict === 'miss' ? 'Next bus' : 'Bus'} ${escapeHtml(c.route)} leaves ${escapeHtml(bus.leaves)}${bus.live ? '' : ' (timetable)'} · ${bus.spareMins} min${bus.spareMins === 1 ? '' : 's'} to spare`
+            : '';
+        const after = c.next ? ` Then ${escapeHtml(c.next.leaves)}.` : '';
+        out.innerHTML = `<div class="verdict ${escapeHtml(c.verdict)}">
+            <b>${title}</b>
+            <span>${why}</span>
+            <span>Train at ${escapeHtml(c.via)} ${escapeHtml(c.train.arrives)}${trainLate ? ` (${Math.round(c.train.delaySecs / 60)} late)` : ''}, ${c.walkMins} min walk, ready ${escapeHtml(c.ready)}.</span>
+            ${busLine ? `<span>${busLine}.${after}</span>` : ''}
+            <small>${c.busLive ? 'Live delays where TransLink has them.' : 'Bus times are the timetable right now.'}</small>
+        </div>`;
+    } catch (err) {
+        out.innerHTML = `<p class="field-error">${escapeHtml(err.message && !/^HTTP/.test(err.message) ? err.message : 'Can’t check the connection right now.')}</p>`;
+    }
+}
+
+$('connect-seg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-via]');
+    if (!b) return;
+    connectVia = b.dataset.via;
+    for (const x of $('connect-seg').querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b));
+    $('connect-out').innerHTML = '<p class="muted">Checking…</p>';
+    loadConnect();
+});
+
 async function loadJourney() {
     if (!state.selected) return;
     const card = $('journey');
@@ -508,6 +573,7 @@ async function loadJourney() {
         card.dataset.shown = '1';
         // Drawn after the sheet is on screen, so the map knows how much of it the sheet covers
         drawJourney(j);
+        updateConnect(j);
     } catch (err) {
         console.error('Failed to load journey:', err);
         card.hidden = true;

@@ -64,6 +64,15 @@
                 <h2 id="journey-title"></h2>
                 <p id="journey-sub" class="muted" aria-live="polite"></p>
                 <div id="journey-body">
+                    <!-- Springfield line trains into the city: will I make my bus at Sherwood or Roma Street? -->
+                    <section id="connect" class="connect" hidden aria-labelledby="connect-title">
+                        <h3 id="connect-title">Catching a bus after this train?</h3>
+                        <div class="seg" id="connect-seg" role="group" aria-label="Where you change">
+                            <button type="button" data-via="sherwood" aria-pressed="false">598 at Sherwood</button>
+                            <button type="button" data-via="roma" aria-pressed="false">M1 at Roma Street</button>
+                        </div>
+                        <div id="connect-out" aria-live="polite"></div>
+                    </section>
                     <ol id="journey-stops" class="stops"></ol>
                 </div>
             </article>
