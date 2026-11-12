@@ -620,6 +620,7 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .bus-detail ol { margin: 0; padding-left: 18px; display: grid; gap: 2px; max-height: 14rem; overflow: auto; }
 .bus-detail ol li { display: flex; justify-content: space-between; gap: 8px; }
 .bus-detail ol li.nathan { font-weight: 700; }
+.bus-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .follow-btn { justify-self: start; border: 1px solid var(--gum); background: #fff; color: var(--gum); font-weight: 800; border-radius: 999px; padding: 6px 12px; cursor: pointer; }
 .follow-btn[aria-pressed="true"] { background: var(--gum); color: #fff; }
 .follow-note { font-size: 0.8rem; color: var(--muted); }

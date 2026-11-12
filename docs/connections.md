@@ -110,4 +110,8 @@ API:
 - `GET /api/connection/places?trip=<train trip id>`: stations on the trip with a bus stop nearby.
 - `GET /api/connection?trip=<train trip id>&at=<station id>`: `{ station, train: { arrives, scheduled, delaySecs, platform }, buses: [{ tripId, route, headsign, stop, platform, walkMins, scheduled, leaves, delaySecs, live, spareMins, status, nathan }], busLive }`. Replaces `via=sherwood|roma`.
 
-Limits: walks are estimates from straight-line distance (stairs and road crossings aren't known); bus live delays exist only once a bus has started its trip.
+Walks (updated the same day): measured along real streets by the walking router (OSRM, OpenStreetMap), plus 90 s to get off the platform, since the router doesn't know stairs or how long the lights take. A stop it can't route to keeps the straight-line estimate and shows "~" in front of the walk.
+
+**Plan this trip** (in a bus's details): opens the Plan tab from the change station, leaving in time for that bus, to Griffith Nathan if the bus goes there (otherwise where it ends). The planner may find something better than that bus.
+
+Bus delays: checked against TransLink's live bus feed on 13 Nov, 9:35 am: 1,754 trips in the feed, 930 of them not started yet, and 827 of those already had a predicted delay of a minute or more (the delay carried over from the bus's previous trip). So buses do get delays before they start; a bus with no prediction at all shows its timetable time.

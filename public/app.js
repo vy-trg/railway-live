@@ -541,7 +541,7 @@ function busRow(b) {
         <span class="when">${escapeHtml(b.leaves)}${late ? `<s>${escapeHtml(b.scheduled)}</s>` : ''}</span>
         <span class="what"><span class="route" style="background:${escapeHtml(b.color)};color:${escapeHtml(b.textColor)}">${escapeHtml(b.route)}</span><span>${escapeHtml(b.headsign)}</span></span>
         <span class="badge ${escapeHtml(b.status)}">${STATUS[b.status]}</span>
-        <span class="where">${stand} · ${minsText(b.walkMins)} walk · ${spare}${b.nathan ? ` · Griffith Nathan ${escapeHtml(b.nathan)}` : ''}</span>
+        <span class="where">${stand} · ${b.walkOnStreets ? '' : '~'}${minsText(b.walkMins)} walk · ${spare}${b.nathan ? ` · Griffith Nathan ${escapeHtml(b.nathan)}` : ''}</span>
     </button>`;
 }
 
@@ -575,15 +575,42 @@ async function loadBusDetail(b) {
         if (connect.open !== b.tripId) return;
         const from = t.stops.findIndex((s) => s.name === b.stop || s.sequence === b.sequence);
         const stops = from === -1 ? t.stops : t.stops.slice(from);
-        const live = b.live ? (b.delaySecs >= 60 ? `Running ${minsText(Math.round(b.delaySecs / 60))} late` : b.delaySecs <= -60 ? `Running ${minsText(Math.round(-b.delaySecs / 60))} early` : 'On time') : 'No live data: timetable time';
+        const live = b.live ? (b.delaySecs >= 60 ? `Running ${minsText(Math.round(b.delaySecs / 60))} late` : b.delaySecs <= -60 ? `Running ${minsText(Math.round(-b.delaySecs / 60))} early` : 'On time') : 'No live prediction for this bus yet: timetable time';
         const on = connect.follow?.bus === b.tripId && connect.follow.train === connect.trip;
+        connect.lastStop = stops.length ? stops[stops.length - 1] : null;
         box.innerHTML = `<p><b>${escapeHtml(live)}.</b> Leaves ${escapeHtml(b.leaves)} from ${escapeHtml(b.stop)}${b.platform ? `, platform ${escapeHtml(b.platform)}` : ''}, ${minsText(b.walkMins)} walk from the train.</p>
-            <button type="button" class="follow-btn" data-follow="${escapeHtml(b.tripId)}" aria-pressed="${on}">${on ? 'Following this bus' : 'Follow this bus'}</button>
+            ${b.walkOnStreets ? '' : '<p class="follow-note">~ The walk is a straight-line estimate: no street route was found for it.</p>'}
+            <div class="bus-actions">
+                <button type="button" class="follow-btn" data-follow="${escapeHtml(b.tripId)}" aria-pressed="${on}">${on ? 'Following this bus' : 'Follow this bus'}</button>
+                <button type="button" class="follow-btn" data-plan="${escapeHtml(b.tripId)}">Plan this trip</button>
+            </div>
             ${on ? '<p class="follow-note">It stays at the top and is re-checked every 30 seconds while this train is open.</p>' : ''}
             <ol>${stops.map((s) => `<li class="${b.nathan && /griffith university|nathan/i.test(s.name) ? 'nathan' : ''}"><span>${escapeHtml(s.name)}</span><span>${escapeHtml(s.expected ?? s.scheduled)}</span></li>`).join('')}</ol>`;
     } catch {
         box.innerHTML = '<p class="field-error">Can’t load this bus’s stops right now.</p>';
     }
+}
+
+// "Plan this trip": the Plan tab, from the station you change at, leaving in time for this bus,
+// to Griffith Nathan if the bus goes there (otherwise to where the bus ends). The planner walks along
+// real streets and may find something better than this bus; that's the point of checking.
+const NATHAN = { id: 'landmark:griffith-nathan', name: 'Griffith University – Nathan campus' };
+function planFromBus(b) {
+    if (!b || !connect.data) return;
+    const end = connect.lastStop;
+    const to = b.nathan ? NATHAN : end?.stationId ? { id: end.stationId, name: end.name } : null;
+    if (!to) return;
+    const from = { id: connect.at, name: connect.data.station };
+    // The planner reads the boxes, so the names must be ones it can find
+    for (const p of [from, to]) if (!stations.some((s) => s.id === p.id)) stations.push({ ...p, modes: p.id.startsWith('landmark:') ? 'place' : 'bus' });
+    showTab('plan');
+    $('plan-from').value = from.name;
+    $('plan-to').value = to.name;
+    plan.from = from;
+    plan.to = to;
+    $('plan-when').value = b.planAt;
+    findJourneys();
+    window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
 }
 
 $('connect-at').addEventListener('change', (e) => {
@@ -615,6 +642,8 @@ $('connect-list').addEventListener('click', (e) => {
         renderConnect();
         return;
     }
+    const planBtn = e.target.closest('[data-plan]');
+    if (planBtn) { planFromBus(connect.data.buses.find((b) => b.tripId === planBtn.dataset.plan)); return; }
     const row = e.target.closest('[data-bus]');
     if (!row) return;
     connect.open = connect.open === row.dataset.bus ? null : row.dataset.bus;

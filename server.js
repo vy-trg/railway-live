@@ -9,7 +9,7 @@ import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
 import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX } from './landmarks.js';
 import { walkRoute, roadPath } from './walk.js';
-import { formatSecs, busesAfterTrain, walkSecsFor, NEAR_BUS_M, KNOWN_WALKS } from './connection.js';
+import { formatSecs, busesAfterTrain, walkSecsFor, streetWalkSecs, NEAR_BUS_M, KNOWN_WALKS } from './connection.js';
 import { distanceM, EXTRA_CHANGE_SECS } from './raptor.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -186,6 +186,27 @@ app.get('/api/stations', handle(async (req, res) => {
 // Train + bus at any station (docs/connections.md).
 // The bus stations within a short walk of a train station, with the walk for each. Kept per station.
 const nearBusCache = new Map();
+const streetWalkCache = new Map();
+// With street walks (slower the first time: one routing call per stop, then kept)
+async function nearBusWalks(stationId) {
+    if (!streetWalkCache.has(stationId)) streetWalkCache.set(stationId, (async () => {
+        const { stations } = await getStatic();
+        const here = stations.find((s) => s.id === stationId);
+        const list = (await nearBusStations(stationId)).map((n) => ({ ...n }));
+        // Along real streets where the walking router knows the way (it doesn't know stairs, so the
+        // 90 seconds off the platform stay). A stop it can't route to keeps the straight-line estimate.
+        await Promise.all(list.filter((n) => !(n.id in KNOWN_WALKS)).map(async (n) => {
+            try {
+                const r = await walkRoute(here, n, { distanceM });
+                if (r) { n.walkSecs = streetWalkSecs(r.secs); n.streets = true; }
+            } catch { /* router down: keep the estimate */ }
+        }));
+        // Nothing reached the router: try again next time instead of keeping estimates for good
+        if (!list.some((n) => n.streets)) setTimeout(() => streetWalkCache.delete(stationId), 10 * 60 * 1000).unref();
+        return list;
+    })());
+    return streetWalkCache.get(stationId);
+}
 async function nearBusStations(stationId) {
     if (nearBusCache.has(stationId)) return nearBusCache.get(stationId);
     const { stations } = await getStatic();
@@ -196,7 +217,7 @@ async function nearBusStations(stationId) {
             if (!s.modes.split(',').includes('bus') || s.lat === null) continue;
             const m = distanceM(here.lat, here.lng, s.lat, s.lng);
             if (m > NEAR_BUS_M) continue;
-            out.push({ id: s.id, name: s.name, walkSecs: KNOWN_WALKS[s.id] ?? walkSecsFor(m) });
+            out.push({ id: s.id, name: s.name, lat: s.lat, lng: s.lng, walkSecs: KNOWN_WALKS[s.id] ?? walkSecsFor(m), streets: false });
         }
     }
     nearBusCache.set(stationId, out);
@@ -225,6 +246,13 @@ app.get('/api/connection/places', handle(async (req, res) => {
     res.json({ places });
 }));
 
+// "2026-11-13", 80100 -> "2026-11-13T22:15" (past midnight moves to the next day)
+function planTime(date, secs) {
+    const d = new Date(`${date}T00:00:00Z`);
+    d.setUTCSeconds(Math.max(0, secs));
+    return d.toISOString().slice(0, 16);
+}
+
 // Every bus leaving near this station after the train gets there:
 // GET /api/connection?trip=…&at=<station id>. Each with Make it / Tight / Miss for its own walk.
 app.get('/api/connection', handle(async (req, res) => {
@@ -234,7 +262,7 @@ app.get('/api/connection', handle(async (req, res) => {
     if (stops.length === 0) return res.status(404).json({ error: 'No trip with that id' });
     const at = stops.find((s) => s.station_id === stationId);
     if (!at) return res.status(400).json({ error: 'This train doesn’t stop there' });
-    const near = await nearBusStations(stationId);
+    const near = await nearBusWalks(stationId);
     if (near.length === 0) return res.status(400).json({ error: `No bus stops within a short walk of ${at.name}` });
 
     const [main, bus, now, nathan] = await Promise.all([getTripUpdates(), getBusTripUpdates().catch(() => null), nowSec(), nathanStations()]);
@@ -255,6 +283,7 @@ app.get('/api/connection', handle(async (req, res) => {
             delaySecs: bus ? delayAtStop(bus.data.get(r.trip_id), r.stop_sequence).delay ?? 0 : 0,
             live: Boolean(bus?.data.get(r.trip_id)),
             walkSecs: st?.walkSecs ?? walkSecsFor(NEAR_BUS_M),
+            streets: st ? st.streets || st.id in KNOWN_WALKS : false,
             stopName: st?.name ?? '',
             platform: r.platform,
             sequence: r.stop_sequence,
@@ -308,6 +337,9 @@ app.get('/api/connection', handle(async (req, res) => {
                 spareMins: Math.round(b.spareSecs / 60),
                 status: b.status,
                 nathan: n === null ? null : formatSecs(n),
+                walkOnStreets: b.streets,
+                // For "Plan this trip": leave the platform in time for this bus (Brisbane date and time)
+                planAt: planTime(date, b.leavesSecs - b.walkSecs),
             };
         }),
         busLive: Boolean(bus),

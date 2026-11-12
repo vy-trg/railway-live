@@ -31,6 +31,10 @@ export const NEAR_BUS_M = 450;
 export function walkSecsFor(distanceM) {
   return Math.ceil((90 + distanceM) / 60) * 60;
 }
+// The same walk measured along streets by the walking router: its time plus the 90 seconds off the platform
+export function streetWalkSecs(routeSecs) {
+  return Math.ceil((90 + routeSecs) / 60) * 60;
+}
 // Vy timed these two herself (docs/connections.md); they beat the estimate
 export const KNOWN_WALKS = { '5341': 3 * 60, place_rompl: 4 * 60 };
 
