@@ -95,3 +95,19 @@ flowchart LR
 Open any train that still has Sherwood or Roma Street ahead (Live or Departures). Under the title: **Catching a bus after this train?** with *598 at Sherwood* and *M1 at Roma Street*. Pick one: **Make it / Tight / Likely to miss it / No more buses**, in words and colour, the train's arrival (and how late), the walk, the bus to catch with minutes to spare, and the one after. It refreshes with the trip every 30 seconds.
 
 Fix found while building it: Roma Street's M1 platform (10792) belongs to the busway station (place_rompl), so looking it up as a station found nothing. The API now asks for the station of the stop and keeps only that platform.
+
+## Any bus, any station (13 Nov, after Vy's feedback)
+
+Vy's question: Roma Street busway has dozens of routes going past; why only ask about the M1? Changed to:
+
+- **Any station** on the train with a bus stop within **450 m** can be picked ("Change at"). The walk to each stop is estimated: 90 s to get off the platform, plus about a second a metre (straight line stretched by a quarter, walked at 4.5 km/h), rounded up to whole minutes. Vy's own timings still win for Sherwood stop 5341 (3 min) and Roma Street busway (4 min).
+- **Every bus** leaving those stops from 5 minutes before the train gets in to 40 minutes after, each marked Make it / Tight / Miss **for the walk to its own stop**. A bus calling at two nearby stops is shown once, at the stop where you can catch it. Only the last two misses before the first catchable bus are shown.
+- **Filter**: All buses / To Griffith Nathan (buses that call within 800 m of Griffith University bus station later on, with the time they get there), and a box for a route number or destination.
+- **Tap a bus**: live delay (or "timetable time"), where it leaves from, the walk, and every stop from there on with times.
+- **Follow this bus**: it stays at the top of the list and is re-checked every 30 seconds with the train. If the train (or the bus) changes so it becomes a miss, a warning says so and gives the next bus on the same route. Remembered in this browser only.
+
+API:
+- `GET /api/connection/places?trip=<train trip id>`: stations on the trip with a bus stop nearby.
+- `GET /api/connection?trip=<train trip id>&at=<station id>`: `{ station, train: { arrives, scheduled, delaySecs, platform }, buses: [{ tripId, route, headsign, stop, platform, walkMins, scheduled, leaves, delaySecs, live, spareMins, status, nathan }], busLive }`. Replaces `via=sherwood|roma`.
+
+Limits: walks are estimates from straight-line distance (stairs and road crossings aren't known); bus live delays exist only once a bus has started its trip.

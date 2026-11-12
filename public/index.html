@@ -67,11 +67,20 @@
                     <!-- Springfield line trains into the city: will I make my bus at Sherwood or Roma Street? -->
                     <section id="connect" class="connect" hidden aria-labelledby="connect-title">
                         <h3 id="connect-title">Catching a bus after this train?</h3>
-                        <div class="seg" id="connect-seg" role="group" aria-label="Where you change">
-                            <button type="button" data-via="sherwood" aria-pressed="false">598 at Sherwood</button>
-                            <button type="button" data-via="roma" aria-pressed="false">M1 at Roma Street</button>
+                        <label class="connect-at"><span>Change at</span>
+                            <select id="connect-at"><option value="">Pick a station…</option></select>
+                        </label>
+                        <div id="connect-tools" class="connect-tools" hidden>
+                            <div class="seg" id="connect-seg" role="group" aria-label="Which buses">
+                                <button type="button" data-f="all" aria-pressed="true">All buses</button>
+                                <button type="button" data-f="nathan" aria-pressed="false">To Griffith Nathan</button>
+                            </div>
+                            <label class="visually-hidden" for="connect-q">Bus number or where it goes</label>
+                            <input id="connect-q" type="search" placeholder="Bus number or where to, e.g. 598" autocomplete="off">
                         </div>
                         <div id="connect-out" aria-live="polite"></div>
+                        <ul id="connect-list" class="bus-list"></ul>
+                        <button type="button" id="connect-more" class="link-btn" hidden>Show more buses</button>
                     </section>
                     <ol id="journey-stops" class="stops"></ol>
                 </div>

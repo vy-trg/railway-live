@@ -51,12 +51,13 @@ export async function getStopNames(stopIds) {
 // Scheduled departures from every platform of a station between `fromSecs` and `toSecs`
 // on `date` (Brisbane). Trips that started the day before and run past midnight
 // (GTFS times like 24:30:00) are included too. The last stop of a trip is not a departure.
+// stationId: one station, or a list of them (every bus stop near a train station)
 export async function getDepartures(stationId, date, fromSecs, toSecs, limit = 12) {
   // Start from the station's stops, find the patterns that call there, then the trips of those
   // patterns whose start time puts them at this stop inside the window (index on pattern_id, start_secs)
   const { rows } = await pool.query(
     `WITH days AS (SELECT $2::date AS day, 0 AS shift UNION ALL SELECT $2::date - 1, 86400)
-     SELECT t.trip_id, ps.stop_id, ps.stop_sequence, t.start_secs + ps.dep_offset - days.shift AS secs,
+     SELECT t.trip_id, ps.stop_id, s.station_id, ps.stop_sequence, t.start_secs + ps.dep_offset - days.shift AS secs,
             s.platform, t.headsign, r.route_id, r.long_name, r.short_name, r.mode, r.color, r.text_color
      FROM stops s
      JOIN pattern_stops ps ON ps.stop_id = s.stop_id AND NOT ps.is_last
@@ -64,11 +65,11 @@ export async function getDepartures(stationId, date, fromSecs, toSecs, limit = 1
      JOIN trips t ON t.pattern_id = ps.pattern_id
                  AND t.start_secs BETWEEN $3 + days.shift - ps.dep_offset AND $4 + days.shift - ps.dep_offset
      JOIN routes r ON r.route_id = t.route_id
-     WHERE s.station_id = $1
+     WHERE s.station_id = ANY($1::text[])
        AND ${RUNS_ON('t.service_id', 'days.day')}
      ORDER BY secs
      LIMIT $5`,
-    [stationId, date, fromSecs, toSecs, limit]
+    [[].concat(stationId), date, fromSecs, toSecs, limit]
   );
   return rows;
 }
@@ -230,4 +231,17 @@ export async function getTripShapes(tripIds) {
 export async function getStationOfStop(stopId) {
   const { rows } = await pool.query('SELECT station_id FROM stops WHERE stop_id = $1', [stopId]);
   return rows[0]?.station_id ?? null;
+}
+
+// For buses you might catch: when each trip gets to one of these stations later on (e.g. Griffith
+// Nathan). Times are the trip's own (seconds after its service day began), with the stop's sequence.
+export async function getCallsAt(tripIds, stationIds) {
+  if (tripIds.length === 0 || stationIds.length === 0) return [];
+  const { rows } = await pool.query(
+    `SELECT st.trip_id, st.stop_sequence, st.arrival_secs, st.departure_secs, s.station_id
+     FROM stop_times st JOIN stops s ON s.stop_id = st.stop_id
+     WHERE st.trip_id = ANY($1::text[]) AND s.station_id = ANY($2::text[])`,
+    [tripIds, stationIds]
+  );
+  return rows;
 }
