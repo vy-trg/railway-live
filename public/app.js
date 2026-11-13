@@ -534,7 +534,8 @@ function drawJourney(j) {
     }
     for (const s of pts) {
         const passed = s.state === 'passed';
-        L.circleMarker([s.lat, s.lng], {
+        // A station's position is the middle of the station, which can be off the track: put the dot on it
+        L.circleMarker(onTrack([s.lat, s.lng], line, 400), {
             pane: 'journey', renderer: journeyRenderer,
             radius: s.state === 'next' ? 5 : 3.5, weight: 2, color: j.color, opacity: passed ? 0.5 : 1,
             fillColor: '#fff', fillOpacity: passed ? 0.6 : 1,
@@ -562,14 +563,14 @@ function nearestIndex(line, at) {
 
 // The closest point on the open trip's track, if the vehicle is within 150 m of it (GPS drifts;
 // a vehicle further away than that is shown where it says it is)
-function onTrack(latlng) {
-    if (!journeyPath) return latlng;
+function onTrack(latlng, path = journeyPath, maxM = 150) {
+    if (!path) return latlng;
     const z = map.getZoom();
     const p = map.project(latlng, z);
     let best = null;
-    for (let i = 1; i < journeyPath.length; i += 1) {
-        const a = map.project(journeyPath[i - 1], z);
-        const b = map.project(journeyPath[i], z);
+    for (let i = 1; i < path.length; i += 1) {
+        const a = map.project(path[i - 1], z);
+        const b = map.project(path[i], z);
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const len = dx * dx + dy * dy;
@@ -580,7 +581,7 @@ function onTrack(latlng) {
     }
     if (!best) return latlng;
     const snapped = map.unproject(best.q, z);
-    return map.distance(snapped, latlng) <= 150 ? [snapped.lat, snapped.lng] : latlng;
+    return map.distance(snapped, latlng) <= maxM ? [snapped.lat, snapped.lng] : latlng;
 }
 
 // The open vehicle, drawn above its journey line
