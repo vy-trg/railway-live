@@ -516,17 +516,28 @@ function drawJourney(j) {
     journeyLayer.clearLayers();
     const pts = j.stops.filter((s) => s.lat !== null);
     if (pts.length < 2) return;
-    const line = j.path && j.path.length > 1 ? j.path : pts.map((s) => [s.lat, s.lng]);
+    let line = j.path && j.path.length > 1 ? j.path : pts.map((s) => [s.lat, s.lng]);
+    // A track can be stored either way round: make it start at the first stop
+    const d2 = (p, s) => (p[0] - s.lat) ** 2 + (p[1] - s.lng) ** 2;
+    if (d2(line[line.length - 1], pts[0]) < d2(line[0], pts[0])) line = [...line].reverse();
     journeyPath = line;
+    // Where the vehicle is now splits the line: the part already travelled is quiet, the part ahead is bold
+    const live = lastTrains.find((t) => t.tripId === j.tripId);
+    const cut = live ? nearestIndex(line, onTrack([live.lat, live.lng])) : 0;
     const style = { pane: 'journey', renderer: journeyRenderer, interactive: false, lineCap: 'round', lineJoin: 'round' };
-    L.polyline(line, { ...style, color: '#23302a', weight: 11, opacity: 0.9 }).addTo(journeyLayer);
-    L.polyline(line, { ...style, color: '#fffaf3', weight: 8, opacity: 1 }).addTo(journeyLayer);
-    L.polyline(line, { ...style, color: j.color, weight: 5, opacity: 1 }).addTo(journeyLayer);
+    const done = line.slice(0, cut + 1);
+    const ahead = line.slice(cut);
+    if (done.length > 1) L.polyline(done, { ...style, color: j.color, weight: 4, opacity: 0.45 }).addTo(journeyLayer);
+    if (ahead.length > 1) {
+        L.polyline(ahead, { ...style, color: '#fff', weight: 10, opacity: 1, className: 'journey-halo' }).addTo(journeyLayer);
+        L.polyline(ahead, { ...style, color: j.color, weight: 6, opacity: 1 }).addTo(journeyLayer);
+    }
     for (const s of pts) {
+        const passed = s.state === 'passed';
         L.circleMarker([s.lat, s.lng], {
             pane: 'journey', renderer: journeyRenderer,
-            radius: s.state === 'next' ? 6 : 4, weight: 2, color: '#23302a',
-            fillColor: s.state === 'passed' ? j.color : '#fffaf3', fillOpacity: 1,
+            radius: s.state === 'next' ? 5 : 3.5, weight: 2, color: j.color, opacity: passed ? 0.5 : 1,
+            fillColor: '#fff', fillOpacity: passed ? 0.6 : 1,
         }).bindTooltip(`${escapeHtml(s.name)} · ${escapeHtml(s.expected ?? s.scheduled)}`).addTo(journeyLayer);
     }
     map.getContainer().classList.add('has-journey');
@@ -534,9 +545,19 @@ function drawJourney(j) {
     if (journeyFitted === j.tripId) return;
     journeyFitted = j.tripId;
     // A running vehicle: go to it. Otherwise show the whole journey.
-    const live = trainMarkers.size && lastTrains.find((t) => t.tripId === j.tripId);
     if (live) focusMap(onTrack([live.lat, live.lng]), 13);
     else focusBounds(line, 14);
+}
+
+// Index of the track point closest to a position (for splitting the line where the vehicle is)
+function nearestIndex(line, at) {
+    let best = 0;
+    let bestD = Infinity;
+    line.forEach((p, i) => {
+        const d = (p[0] - at[0]) ** 2 + (p[1] - at[1]) ** 2;
+        if (d < bestD) { bestD = d; best = i; }
+    });
+    return best;
 }
 
 // The closest point on the open trip's track, if the vehicle is within 150 m of it (GPS drifts;
@@ -564,11 +585,11 @@ function onTrack(latlng) {
 
 // The open vehicle, drawn above its journey line
 function drawVehicleDot(t) {
-    const style = { pane: 'vehicle', renderer: vehicleRenderer, radius: 9, weight: 3, color: '#fffaf3', fillColor: cssVar(LEVEL_VARS[t.level] ?? '--muted'), fillOpacity: 1, interactive: false };
+    const style = { pane: 'vehicle', renderer: vehicleRenderer, radius: 8, weight: 3, color: '#fff', fillColor: cssVar(LEVEL_VARS[t.level] ?? '--muted'), fillOpacity: 1, interactive: false, className: 'vehicle-dot' };
     const at = onTrack([t.lat, t.lng]);
     if (!vehicleDot) {
         vehicleDot = L.circleMarker(at, style).addTo(map);
-        vehicleDot.halo = L.circleMarker(at, { ...style, radius: 15, weight: 0, fillColor: '#23302a', fillOpacity: 0.18 }).addTo(map);
+        vehicleDot.halo = L.circleMarker(at, { ...style, radius: 16, weight: 0, fillOpacity: 0.22, className: 'vehicle-pulse' }).addTo(map);
         vehicleDot.halo.bringToBack();
     } else {
         vehicleDot.setStyle(style);

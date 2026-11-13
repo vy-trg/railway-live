@@ -658,6 +658,14 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 
 /* An open trip: its line and vehicle stand out, the rest of the network fades back */
 #map .leaflet-overlay-pane, #map .leaflet-marker-pane { transition: opacity 250ms; }
-#map.has-journey .leaflet-overlay-pane { opacity: 0.4; }
-#map.has-journey .leaflet-marker-pane { opacity: 0.55; }
+#map .leaflet-overlay-pane { transition: opacity 250ms, filter 250ms; }
+#map.has-journey .leaflet-overlay-pane { opacity: 0.45; filter: saturate(0.35); }
+#map.has-journey .leaflet-marker-pane { opacity: 0.55; filter: saturate(0.35); }
+/* A soft shadow lifts the open line off the map instead of a hard outline */
+.leaflet-journey-pane svg, .leaflet-vehicle-pane svg { filter: drop-shadow(0 1px 2px rgb(35 48 42 / 0.3)); }
+.vehicle-dot { filter: drop-shadow(0 1px 3px rgb(35 48 42 / 0.35)); }
+/* The vehicle breathes slowly so the eye finds it; still for people who turn motion off */
+.vehicle-pulse { transform-box: fill-box; transform-origin: center; animation: vehicle-pulse 2.4s ease-in-out infinite; }
+@keyframes vehicle-pulse { 0%, 100% { transform: scale(0.75); opacity: 0.35; } 50% { transform: scale(1.15); opacity: 0.12; } }
+@media (prefers-reduced-motion: reduce) { .vehicle-pulse { animation: none; } }
 #map.is-planning .leaflet-journey-pane, #map.is-planning .leaflet-vehicle-pane { display: none; }
