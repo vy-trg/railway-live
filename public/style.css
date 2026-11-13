@@ -617,6 +617,12 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .badge { font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: #fff; white-space: nowrap; }
 .badge.make { background: var(--ontime); } .badge.tight { background: var(--late); } .badge.miss { background: var(--verylate); }
 .bus-detail { padding: 0 12px 12px; display: grid; gap: 8px; font-size: 0.85rem; }
+.connect-help { margin: 0; font-size: 0.82rem; color: var(--muted); }
+.connect-field { display: grid; gap: 4px; }
+.connect-field > label { font-size: 0.8rem; font-weight: 800; }
+.connect-field > label span { font-weight: 600; color: var(--muted); margin-left: 4px; }
+.connect-field small { font-size: 0.75rem; color: var(--muted); }
+.connect-tools { gap: 10px; }
 .connect-to { display: flex; align-items: center; gap: 4px; }
 .connect-to input { flex: 1; min-width: 0; border: 0; border-radius: 10px; padding: 9px 10px; background: var(--sand); color: var(--ink); font: inherit; font-weight: 700; }
 /* A bus's stops: a coloured line with a dot per stop, names on the left, times lined up on the right */
@@ -643,3 +649,8 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .verdict span { font-size: 0.85rem; }
 .verdict small { font-size: 0.75rem; color: var(--muted); }
 .verdict.make { --c: var(--ontime); } .verdict.tight { --c: var(--late); } .verdict.miss, .verdict.none { --c: var(--verylate); }
+
+/* "Follow" on the map: shown after you drag the map away from the vehicle you opened */
+.follow-map-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: var(--ink); color: #fff; font: inherit; font-weight: 800; font-size: 0.85rem; box-shadow: var(--shadow); cursor: pointer; }
+.follow-map-btn span { margin-right: 4px; }
+.follow-map-btn:focus-visible { outline: 2px solid var(--gum); outline-offset: 2px; }

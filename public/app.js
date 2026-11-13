@@ -267,6 +267,7 @@ function drawTrains() {
         if (t.tripId === state.selected) {
             const sel = trainMarkers.get(t.id);
             if (sel.bringToFront) sel.bringToFront(); else sel.setZIndexOffset(1000);
+            keepInView([t.lat, t.lng]);
         }
     }
     for (const [id, marker] of trainMarkers) {
@@ -437,8 +438,51 @@ function focusBounds(points, maxZoom) {
     map.flyToBounds(points, { paddingTopLeft: [40, 40], paddingBottomRight: [40, 40 + pad], maxZoom, duration: reduceMotion() ? 0 : 0.8 });
 }
 
+// The map follows the vehicle you opened: when it gets near the edge of what you can see
+// (above the sheet on a phone), the map slides so it's back in the middle. Dragging the map
+// yourself stops that, and a "Follow" button on the map turns it back on.
+let followVehicle = false;
+const FollowBtn = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+        const btn = L.DomUtil.create('button', 'follow-map-btn');
+        btn.type = 'button';
+        btn.hidden = true;
+        btn.innerHTML = '<span aria-hidden="true">◎</span> Follow';
+        L.DomEvent.disableClickPropagation(btn);
+        L.DomEvent.on(btn, 'click', () => {
+            setFollowVehicle(true);
+            const t = lastTrains.find((x) => x.tripId === state.selected);
+            if (t) focusMap([t.lat, t.lng], map.getZoom());
+        });
+        return btn;
+    },
+});
+const followBtn = new FollowBtn().addTo(map).getContainer();
+function setFollowVehicle(on) {
+    followVehicle = on;
+    // The button only makes sense for a vehicle that's on the map right now
+    const live = state.selected && lastTrains.some((x) => x.tripId === state.selected);
+    followBtn.hidden = on || !live;
+    followBtn.setAttribute('aria-label', 'Follow this vehicle on the map');
+}
+map.on('dragstart', () => { if (state.selected) setFollowVehicle(false); });
+function keepInView(latlng) {
+    if (!followVehicle) return;
+    const size = map.getSize();
+    const p = map.latLngToContainerPoint(latlng);
+    const bottom = size.y - hiddenBottom();
+    const margin = Math.min(80, size.x / 5, bottom / 5);
+    if (p.x > margin && p.x < size.x - margin && p.y > margin && p.y < bottom - margin) return;
+    const shift = hiddenBottom() / 2;
+    const z = map.getZoom();
+    const target = shift ? map.unproject(map.project(latlng, z).add([0, shift]), z) : latlng;
+    map.panTo(target, { animate: !reduceMotion(), duration: 1 });
+}
+
 async function selectTrain(tripId) {
     state.selected = tripId;
+    setFollowVehicle(true);
     showAllStops = false;
     setSheet(false); // a phone starts with the short sheet, so the map is clear
     // On a phone the map is at the top of the page: bring it into view
@@ -726,6 +770,7 @@ async function loadJourney() {
 
 function closeJourney() {
     state.selected = null;
+    setFollowVehicle(false);
     journeyLayer.clearLayers();
     journeyFitted = null;
     hideWithExit($('journey'), 180);
