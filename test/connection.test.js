@@ -97,3 +97,32 @@ test('formatSecs shows a 12-hour clock', () => {
   assert.equal(formatSecs(t(0, 30)), '12:30 am');
   assert.equal(formatSecs(t(17, 45)), '5:45 pm');
 });
+
+// ---------- Any bus at any station ----------
+import { walkSecsFor, busesAfterTrain } from '../connection.js';
+
+test('walk to a nearby stop: 90 s off the platform plus about a second a metre, whole minutes', () => {
+  assert.equal(walkSecsFor(0), 2 * 60);
+  assert.equal(walkSecsFor(150), 4 * 60);
+  assert.equal(walkSecsFor(400), 9 * 60);
+});
+
+test('every bus after the train, each judged with the walk to its own stop', () => {
+  const train = { arrivalSecs: t(8, 0), delaySecs: 120 }; // really 8:02
+  const list = busesAfterTrain(train, [
+    { tripId: 'far', departSecs: t(8, 8), walkSecs: 7 * 60 }, // ready 8:09: miss
+    { tripId: 'near', departSecs: t(8, 5), walkSecs: 2 * 60 }, // ready 8:04: tight
+    { tripId: 'late', departSecs: t(8, 3), delaySecs: 300, walkSecs: 2 * 60 }, // leaves 8:08: make
+  ]);
+  assert.deepEqual(list.map((b) => [b.tripId, b.status]), [['near', 'tight'], ['late', 'make'], ['far', 'miss']]);
+});
+
+test('a bus calling at two nearby stops is shown once, at the stop where you can catch it', () => {
+  const train = { arrivalSecs: t(8, 0), delaySecs: 0 };
+  const list = busesAfterTrain(train, [
+    { tripId: 'x', departSecs: t(8, 3), walkSecs: 4 * 60, stop: 'A' }, // miss at A
+    { tripId: 'x', departSecs: t(8, 6), walkSecs: 3 * 60, stop: 'B' }, // tight at B
+  ]);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].stop, 'B');
+});

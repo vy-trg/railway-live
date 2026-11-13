@@ -67,11 +67,29 @@
                     <!-- Springfield line trains into the city: will I make my bus at Sherwood or Roma Street? -->
                     <section id="connect" class="connect" hidden aria-labelledby="connect-title">
                         <h3 id="connect-title">Catching a bus after this train?</h3>
-                        <div class="seg" id="connect-seg" role="group" aria-label="Where you change">
-                            <button type="button" data-via="sherwood" aria-pressed="false">598 at Sherwood</button>
-                            <button type="button" data-via="roma" aria-pressed="false">M1 at Roma Street</button>
+                        <p class="connect-help">Pick the station where you get off. You'll see every bus leaving nearby after the train arrives, and whether you can make it on foot.</p>
+                        <label class="connect-at"><span>Change at</span>
+                            <select id="connect-at"><option value="">Pick a station…</option></select>
+                        </label>
+                        <div id="connect-tools" class="connect-tools" hidden>
+                            <div class="connect-field">
+                                <label for="connect-to">Going to <span>optional</span></label>
+                                <div class="connect-to">
+                                    <input id="connect-to" list="connect-to-list" placeholder="e.g. UQ St Lucia, Garden City" autocomplete="off" aria-describedby="connect-to-hint">
+                                    <datalist id="connect-to-list"></datalist>
+                                    <button id="connect-to-clear" type="button" class="link-btn" hidden>Clear</button>
+                                </div>
+                                <small id="connect-to-hint">Only buses that stop there, with the time they get you there.</small>
+                            </div>
+                            <div class="connect-field">
+                                <label for="connect-q">Bus number <span>optional</span></label>
+                                <input id="connect-q" type="search" placeholder="e.g. 598" autocomplete="off" aria-describedby="connect-q-hint">
+                                <small id="connect-q-hint">Already know your bus? Show just that route.</small>
+                            </div>
                         </div>
                         <div id="connect-out" aria-live="polite"></div>
+                        <ul id="connect-list" class="bus-list"></ul>
+                        <button type="button" id="connect-more" class="link-btn" hidden>Show more buses</button>
                     </section>
                     <ol id="journey-stops" class="stops"></ol>
                 </div>

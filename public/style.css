@@ -598,8 +598,74 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .connect { display: grid; gap: 8px; padding: 12px; margin: 4px 0 12px; border-radius: 14px; background: var(--paper); border: 1px solid var(--line); }
 .connect h3 { margin: 0; font-size: 0.92rem; }
 .connect .seg { flex-wrap: wrap; }
+.connect-at { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; font-size: 0.85rem; }
+.connect-at select { min-width: 0; }
+.connect-tools { display: grid; gap: 6px; }
+.connect-tools input { width: 100%; box-sizing: border-box; border: 0; border-radius: 10px; padding: 9px 10px; background: var(--sand); color: var(--ink); font: inherit; font-weight: 700; }
+.connect-at select { background: var(--sand); }
+.bus-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.bus-list > li { border: 1px solid var(--line); border-radius: 12px; background: #fff; overflow: hidden; }
+.bus-list > li.followed { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.bus-row { all: unset; box-sizing: border-box; cursor: pointer; width: 100%; display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center; padding: 10px 12px; }
+.bus-row:focus-visible { outline: 2px solid var(--gum); outline-offset: -2px; }
+.bus-row .when { white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
+.bus-row .when s { display: block; font-weight: 400; font-size: 0.72rem; color: var(--muted); }
+.bus-row .what { min-width: 0; display: flex; gap: 6px; align-items: baseline; }
+.bus-row .what span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bus-row .route { flex: none; font-size: 0.78rem; font-weight: 700; padding: 1px 6px; border-radius: 6px; }
+.bus-row .where { grid-column: 2 / 4; font-size: 0.78rem; color: var(--muted); }
+.badge { font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: #fff; white-space: nowrap; }
+.badge.make { background: var(--ontime); } .badge.tight { background: var(--late); } .badge.miss { background: var(--verylate); }
+.bus-detail { padding: 0 12px 12px; display: grid; gap: 8px; font-size: 0.85rem; }
+.connect-help { margin: 0; font-size: 0.82rem; color: var(--muted); }
+.connect-field { display: grid; gap: 4px; }
+.connect-field > label { font-size: 0.8rem; font-weight: 800; }
+.connect-field > label span { font-weight: 600; color: var(--muted); margin-left: 4px; }
+.connect-field small { font-size: 0.75rem; color: var(--muted); }
+.connect-tools { gap: 10px; }
+.connect-to { display: flex; align-items: center; gap: 4px; }
+.connect-to input { flex: 1; min-width: 0; border: 0; border-radius: 10px; padding: 9px 10px; background: var(--sand); color: var(--ink); font: inherit; font-weight: 700; }
+/* A bus's stops: a coloured line with a dot per stop, names on the left, times lined up on the right */
+.bus-stops { list-style: none; margin: 0; padding: 0; }
+.bus-stops li { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: baseline; padding: 5px 0 5px 22px; font-size: 0.85rem; line-height: 1.3; }
+.bus-stops li::before { content: ""; position: absolute; left: 5px; top: 0; bottom: 0; width: 3px; background: var(--c); opacity: 0.35; }
+.bus-stops li:first-child::before { top: 50%; }
+.bus-stops li:last-child::before { bottom: 50%; }
+.bus-stops li::after { content: ""; position: absolute; left: 2px; top: calc(50% - 4.5px); width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid var(--c); box-sizing: border-box; }
+.bus-stops li.geton::after, .bus-stops li.dest::after { background: var(--c); width: 11px; height: 11px; left: 1px; top: calc(50% - 5.5px); }
+.bus-stops li.geton .n, .bus-stops li.dest .n { font-weight: 800; }
+.bus-stops .n em { font-style: normal; font-size: 0.7rem; font-weight: 800; color: var(--muted); margin-left: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+.bus-stops .t { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+.bus-stops li.geton .t, .bus-stops li.dest .t { color: var(--ink); font-weight: 800; }
+.bus-stops li.gap::after { display: none; }
+.bus-stops li.gap { grid-template-columns: 1fr; }
+.bus-stops li.gap .link-btn { justify-self: start; padding: 2px 0; color: var(--muted); }
+.bus-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.follow-btn { justify-self: start; border: 1px solid var(--gum); background: #fff; color: var(--gum); font-weight: 800; border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+.follow-btn[aria-pressed="true"] { background: var(--gum); color: #fff; }
+.follow-note { font-size: 0.8rem; color: var(--muted); }
 .verdict { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; border-left: 6px solid var(--c); background: color-mix(in srgb, var(--c) 10%, transparent); }
 .verdict b { font-size: 1.05rem; color: var(--c); }
 .verdict span { font-size: 0.85rem; }
 .verdict small { font-size: 0.75rem; color: var(--muted); }
 .verdict.make { --c: var(--ontime); } .verdict.tight { --c: var(--late); } .verdict.miss, .verdict.none { --c: var(--verylate); }
+
+/* "Follow" on the map: shown after you drag the map away from the vehicle you opened */
+.follow-map-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: var(--paper); color: var(--ink); font: inherit; font-weight: 800; font-size: 0.85rem; box-shadow: var(--shadow); cursor: pointer; }
+.follow-map-btn span { margin-right: 4px; }
+.follow-map-btn[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.follow-map-btn:focus-visible { outline: 2px solid var(--gum); outline-offset: 2px; }
+
+/* An open trip: its line and vehicle stand out, the rest of the network fades back */
+#map .leaflet-overlay-pane, #map .leaflet-marker-pane { transition: opacity 250ms; }
+#map .leaflet-overlay-pane { transition: opacity 250ms, filter 250ms; }
+#map.has-journey .leaflet-overlay-pane { opacity: 0.45; filter: saturate(0.35); }
+#map.has-journey .leaflet-marker-pane { opacity: 0.55; filter: saturate(0.35); }
+/* A soft shadow lifts the open line off the map instead of a hard outline */
+.leaflet-journey-pane svg, .leaflet-vehicle-pane svg { filter: drop-shadow(0 1px 2px rgb(35 48 42 / 0.3)); }
+.vehicle-dot { filter: drop-shadow(0 1px 3px rgb(35 48 42 / 0.35)); }
+/* The vehicle breathes slowly so the eye finds it; still for people who turn motion off */
+.vehicle-pulse { transform-box: fill-box; transform-origin: center; animation: vehicle-pulse 2.4s ease-in-out infinite; }
+@keyframes vehicle-pulse { 0%, 100% { transform: scale(0.75); opacity: 0.35; } 50% { transform: scale(1.15); opacity: 0.12; } }
+@media (prefers-reduced-motion: reduce) { .vehicle-pulse { animation: none; } }
+#map.is-planning .leaflet-journey-pane, #map.is-planning .leaflet-vehicle-pane { display: none; }

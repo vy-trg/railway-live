@@ -146,6 +146,7 @@ export function buildTripProgress(stops, tripUpdate, nowSec, serviceStartEpoch) 
         else if (!nextFound) { state = 'next'; nextFound = true; }
         return {
             sequence: s.stop_sequence,
+            stationId: s.station_id,
             name: s.name.replace(/ (station|ferry terminal)$/, ''),
             platform: s.platform,
             lat: s.lat ?? null,

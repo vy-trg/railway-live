@@ -199,6 +199,8 @@ function routeVisible(train) {
 
 function markerStyle(t) {
     const selected = t.tripId === state.selected;
+    // The open vehicle is drawn above its journey line instead (drawVehicleDot)
+    if (selected) return { radius: 7, weight: 0, opacity: 0, fillOpacity: 0 };
     // Buses are smaller: there can be a thousand of them
     const bus = t.mode === 'bus';
     return {
@@ -211,15 +213,18 @@ function markerStyle(t) {
 }
 
 // Trains glide to their new position over 1.2 s (ease-in-out) instead of jumping every 30 s
-function glide(marker, to) {
+// ms / linear: the open vehicle moves steadily over most of the 30 seconds until the next position
+// (so it, and the map following it, keep moving instead of jumping every 30 seconds)
+function glide(marker, to, onFrame, { ms = 1200, linear = false } = {}) {
     const from = marker.getLatLng();
-    if (reduceMotion() || (from.lat === to[0] && from.lng === to[1])) { marker.setLatLng(to); return; }
+    if (reduceMotion() || (from.lat === to[0] && from.lng === to[1])) { marker.setLatLng(to); onFrame?.(marker.getLatLng()); return; }
     cancelAnimationFrame(marker.glideFrame);
     const start = performance.now();
-    const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
+    const ease = linear ? (x) => x : (x) => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
     const step = (now) => {
-        const k = ease(Math.min(1, (now - start) / 1200));
+        const k = ease(Math.min(1, (now - start) / ms));
         marker.setLatLng([from.lat + (to[0] - from.lat) * k, from.lng + (to[1] - from.lng) * k]);
+        onFrame?.(marker.getLatLng());
         if (k < 1) marker.glideFrame = requestAnimationFrame(step);
     };
     marker.glideFrame = requestAnimationFrame(step);
@@ -242,6 +247,7 @@ function shapeIcon(t) {
 
 function drawTrains() {
     const seen = new Set();
+    let selectedSeen = false;
     for (const t of lastTrains) {
         if (!routeVisible(t)) continue;
         seen.add(t.id);
@@ -252,7 +258,7 @@ function drawTrains() {
         if (existing) {
             glide(existing, [t.lat, t.lng]);
             if (isCircle(t.mode)) existing.setStyle(markerStyle(t));
-            else existing.setIcon(shapeIcon(t));
+            else { existing.setIcon(shapeIcon(t)); existing.setOpacity(t.tripId === state.selected ? 0 : 1); }
             existing.setTooltipContent(escapeHtml(tip));
         } else {
             const m = (isCircle(t.mode)
@@ -265,10 +271,12 @@ function drawTrains() {
         }
         trainMarkers.get(t.id).trainTripId = t.tripId;
         if (t.tripId === state.selected) {
-            const sel = trainMarkers.get(t.id);
-            if (sel.bringToFront) sel.bringToFront(); else sel.setZIndexOffset(1000);
+            selectedSeen = true;
+            drawVehicleDot(t);
         }
     }
+    if (!selectedSeen) removeVehicleDot();
+    showFollowBtn(selectedSeen);
     for (const [id, marker] of trainMarkers) {
         if (!seen.has(id)) {
             map.removeLayer(marker);
@@ -424,7 +432,10 @@ function hiddenBottom() {
     return Math.max(0, m.bottom - sheet.getBoundingClientRect().top);
 }
 // Go to a point, keeping it in the part of the map you can see
+let mapFlying = false;
+map.on('moveend', () => { mapFlying = false; });
 function focusMap(latlng, zoom) {
+    mapFlying = !reduceMotion();
     const z = Math.max(map.getZoom(), zoom);
     const shift = hiddenBottom() / 2;
     const target = shift ? map.unproject(map.project(latlng, z).add([0, shift]), z) : latlng;
@@ -433,12 +444,51 @@ function focusMap(latlng, zoom) {
     else map.flyTo(target, z, { duration: 0.6 });
 }
 function focusBounds(points, maxZoom) {
+    mapFlying = !reduceMotion();
     const pad = hiddenBottom();
     map.flyToBounds(points, { paddingTopLeft: [40, 40], paddingBottomRight: [40, 40 + pad], maxZoom, duration: reduceMotion() ? 0 : 0.8 });
 }
 
+// The map follows the vehicle you opened: it stays in the middle of what you can see (above the
+// sheet on a phone) and the map slides along with it, frame by frame, as it glides to each new position.
+// The "Following" button on the map turns that off and on; dragging the map yourself turns it off.
+let followVehicle = false;
+const FollowBtn = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+        const btn = L.DomUtil.create('button', 'follow-map-btn');
+        btn.type = 'button';
+        btn.hidden = true;
+        L.DomEvent.disableClickPropagation(btn);
+        L.DomEvent.on(btn, 'click', () => {
+            setFollowVehicle(!followVehicle);
+            if (followVehicle && vehicleDot) focusMap(vehicleDot.getLatLng(), map.getZoom());
+        });
+        return btn;
+    },
+});
+const followBtn = new FollowBtn().addTo(map).getContainer();
+function setFollowVehicle(on) {
+    followVehicle = on;
+    followBtn.setAttribute('aria-pressed', String(on));
+    followBtn.innerHTML = `<span aria-hidden="true">◎</span> ${on ? 'Following' : 'Follow'}`;
+    followBtn.setAttribute('aria-label', on ? 'Stop following this vehicle' : 'Follow this vehicle on the map');
+}
+// Shown only while the open trip's vehicle is on the map
+function showFollowBtn(on) { followBtn.hidden = !on; }
+map.on('dragstart', () => { if (followVehicle) setFollowVehicle(false); });
+function keepInView(latlng) {
+    if (!followVehicle || mapFlying) return; // not while the map is still flying to the vehicle
+    const shift = hiddenBottom() / 2;
+    const z = map.getZoom();
+    const target = shift ? map.unproject(map.project(latlng, z).add([0, shift]), z) : latlng;
+    map.setView(target, z, { animate: false });
+}
+
 async function selectTrain(tripId) {
+    if (tripId !== state.selected) { removeVehicleDot(); journeyPath = null; }
     state.selected = tripId;
+    setFollowVehicle(true);
     showAllStops = false;
     setSheet(false); // a phone starts with the short sheet, so the map is clear
     // On a phone the map is at the top of the page: bring it into view
@@ -449,94 +499,320 @@ async function selectTrain(tripId) {
     await loadJourney();
 }
 
-// The selected journey's stops drawn on the map, so a departure you tap shows where it goes
+// The selected journey drawn on top of everything else in its own layer, so it can't be mixed up with
+// another line of the same colour: a dark outline, a white gap, then the line's colour, and the rest of
+// the map fades back. The vehicle itself sits on top of its line (its own layer, above the journey),
+// snapped onto the track when the GPS point is a little off it.
+map.createPane('journey').style.zIndex = 450;
+map.createPane('vehicle').style.zIndex = 460;
+const journeyRenderer = L.svg({ pane: 'journey' });
+const vehicleRenderer = L.svg({ pane: 'vehicle' });
 const journeyLayer = L.layerGroup().addTo(map);
 let journeyFitted = null; // trip id the map was last fitted to, so 30-second refreshes don't move the map
+let journeyPath = null; // [[lat, lng]...] of the open trip, for snapping its vehicle onto the track
+let vehicleDot = null;
 
 function drawJourney(j) {
     journeyLayer.clearLayers();
     const pts = j.stops.filter((s) => s.lat !== null);
     if (pts.length < 2) return;
-    const line = pts.map((s) => [s.lat, s.lng]);
-    L.polyline(line, { color: '#fffaf3', weight: 8, opacity: 0.95, interactive: false }).addTo(journeyLayer);
-    L.polyline(line, { color: j.color, weight: 4, opacity: 1, interactive: false }).addTo(journeyLayer);
+    let line = j.path && j.path.length > 1 ? j.path : pts.map((s) => [s.lat, s.lng]);
+    // A track can be stored either way round: make it start at the first stop
+    const d2 = (p, s) => (p[0] - s.lat) ** 2 + (p[1] - s.lng) ** 2;
+    if (d2(line[line.length - 1], pts[0]) < d2(line[0], pts[0])) line = [...line].reverse();
+    journeyPath = line;
+    // Where the vehicle is now splits the line: the part already travelled is quiet, the part ahead is bold
+    const live = lastTrains.find((t) => t.tripId === j.tripId);
+    const cut = live ? nearestIndex(line, onTrack([live.lat, live.lng])) : 0;
+    const style = { pane: 'journey', renderer: journeyRenderer, interactive: false, lineCap: 'round', lineJoin: 'round' };
+    const done = line.slice(0, cut + 1);
+    const ahead = line.slice(cut);
+    if (done.length > 1) L.polyline(done, { ...style, color: j.color, weight: 4, opacity: 0.45 }).addTo(journeyLayer);
+    if (ahead.length > 1) {
+        L.polyline(ahead, { ...style, color: '#fff', weight: 10, opacity: 1, className: 'journey-halo' }).addTo(journeyLayer);
+        L.polyline(ahead, { ...style, color: j.color, weight: 6, opacity: 1 }).addTo(journeyLayer);
+    }
     for (const s of pts) {
-        L.circleMarker([s.lat, s.lng], {
-            radius: s.state === 'next' ? 6 : 4, weight: 2, color: j.color,
-            fillColor: s.state === 'passed' ? j.color : '#fffaf3', fillOpacity: 1,
+        const passed = s.state === 'passed';
+        // A station's position is the middle of the station, which can be off the track: put the dot on it
+        L.circleMarker(onTrack([s.lat, s.lng], line, 400), {
+            pane: 'journey', renderer: journeyRenderer,
+            radius: s.state === 'next' ? 5 : 3.5, weight: 2, color: j.color, opacity: passed ? 0.5 : 1,
+            fillColor: '#fff', fillOpacity: passed ? 0.6 : 1,
         }).bindTooltip(`${escapeHtml(s.name)} · ${escapeHtml(s.expected ?? s.scheduled)}`).addTo(journeyLayer);
     }
+    map.getContainer().classList.add('has-journey');
+    drawTrains();
     if (journeyFitted === j.tripId) return;
     journeyFitted = j.tripId;
     // A running vehicle: go to it. Otherwise show the whole journey.
-    const live = trainMarkers.size && lastTrains.find((t) => t.tripId === j.tripId);
-    if (live) focusMap([live.lat, live.lng], 13);
+    if (live) focusMap(onTrack([live.lat, live.lng]), 13);
     else focusBounds(line, 14);
 }
 
+// Index of the track point closest to a position (for splitting the line where the vehicle is)
+function nearestIndex(line, at) {
+    let best = 0;
+    let bestD = Infinity;
+    line.forEach((p, i) => {
+        const d = (p[0] - at[0]) ** 2 + (p[1] - at[1]) ** 2;
+        if (d < bestD) { bestD = d; best = i; }
+    });
+    return best;
+}
+
+// The closest point on the open trip's track, if the vehicle is within 150 m of it (GPS drifts;
+// a vehicle further away than that is shown where it says it is)
+function onTrack(latlng, path = journeyPath, maxM = 150) {
+    if (!path) return latlng;
+    const z = map.getZoom();
+    const p = map.project(latlng, z);
+    let best = null;
+    for (let i = 1; i < path.length; i += 1) {
+        const a = map.project(path[i - 1], z);
+        const b = map.project(path[i], z);
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = dx * dx + dy * dy;
+        const k = len ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len)) : 0;
+        const q = L.point(a.x + k * dx, a.y + k * dy);
+        const d = q.distanceTo(p);
+        if (!best || d < best.d) best = { d, q };
+    }
+    if (!best) return latlng;
+    const snapped = map.unproject(best.q, z);
+    return map.distance(snapped, latlng) <= maxM ? [snapped.lat, snapped.lng] : latlng;
+}
+
+// The open vehicle, drawn above its journey line
+function drawVehicleDot(t) {
+    const style = { pane: 'vehicle', renderer: vehicleRenderer, radius: 8, weight: 3, color: '#fff', fillColor: cssVar(LEVEL_VARS[t.level] ?? '--muted'), fillOpacity: 1, interactive: false, className: 'vehicle-dot' };
+    const at = onTrack([t.lat, t.lng]);
+    if (!vehicleDot) {
+        vehicleDot = L.circleMarker(at, style).addTo(map);
+        vehicleDot.halo = L.circleMarker(at, { ...style, radius: 16, weight: 0, fillOpacity: 0.22, className: 'vehicle-pulse' }).addTo(map);
+        vehicleDot.halo.bringToBack();
+    } else {
+        vehicleDot.setStyle(style);
+        // A big jump (first update, or the vehicle moved a lot) goes quickly; normal moves take 25 s
+        const far = map.distance(vehicleDot.getLatLng(), at) > 3000;
+        glide(vehicleDot, at, (ll) => { vehicleDot?.halo.setLatLng(ll); keepInView(ll); }, far ? {} : { ms: 25000, linear: true });
+    }
+}
+function removeVehicleDot() {
+    if (!vehicleDot) return;
+    cancelAnimationFrame(vehicleDot.glideFrame);
+    map.removeLayer(vehicleDot.halo);
+    map.removeLayer(vehicleDot);
+    vehicleDot = null;
+}
 
 // ---------- Will I make my bus? (train + bus, docs/connections.md) ----------
-// Shown on any train that still has Sherwood or Roma Street ahead (Springfield and Ipswich line
-// trains both stop at Sherwood; every inbound train stops at Roma Street).
-// The answer comes from GET /api/connection and refreshes with the trip (every 30 seconds).
-const CONNECT_AT = { sherwood: /^Sherwood\b/, roma: /^Roma Street\b/ };
-const VERDICT = {
-    make: ['Make it', 'You get there with time to spare.'],
-    tight: ['Tight', 'Less than 3 minutes to spare: walk briskly.'],
-    miss: ['Likely to miss it', 'The train is too late for this bus.'],
-    none: ['No more buses', 'Nothing on this route in the next 90 minutes.'],
-};
-let connectVia = null;
-let connectTrip = null;
+// On any train: pick a station ahead where you'll get off, and see every bus leaving nearby after
+// the train gets there, each marked Make it / Tight / Miss for the walk to its own stop.
+// Tap a bus for its stops and live delay; "Follow this bus" keeps it at the top and re-checks it
+// every 30 seconds (with the trip). From GET /api/connection/places and /api/connection.
+const STATUS = { make: 'Make it', tight: 'Tight', miss: 'Miss' };
+const connect = { trip: null, places: [], at: '', to: null, q: '', data: null, open: null, more: false, follow: null, allStops: false };
+const FOLLOW_KEY = 'rl-follow-bus';
+try { connect.follow = JSON.parse(localStorage.getItem(FOLLOW_KEY) || 'null'); } catch { connect.follow = null; }
+const saveFollow = () => { try { localStorage.setItem(FOLLOW_KEY, JSON.stringify(connect.follow)); } catch { /* private mode */ } };
 
-function updateConnect(j) {
+async function updateConnect(j) {
     const box = $('connect');
-    const ahead = j.stops.filter((s) => s.state !== 'passed');
-    const options = j.mode === 'train'
-        ? Object.keys(CONNECT_AT).filter((via) => ahead.some((s) => CONNECT_AT[via].test(s.name)))
-        : [];
-    if (j.tripId !== connectTrip) { connectTrip = j.tripId; connectVia = null; $('connect-out').innerHTML = ''; }
-    box.hidden = options.length === 0;
-    if (box.hidden) return;
-    for (const b of $('connect-seg').querySelectorAll('button')) {
-        b.hidden = !options.includes(b.dataset.via);
-        b.setAttribute('aria-pressed', String(b.dataset.via === connectVia));
+    if (j.mode !== 'train') { box.hidden = true; return; }
+    if (j.tripId !== connect.trip) {
+        connect.trip = j.tripId;
+        connect.places = [];
+        connect.data = null;
+        connect.open = null;
+        connect.more = false;
+        $('connect-out').innerHTML = '';
+        $('connect-list').innerHTML = '';
+        $('connect-more').hidden = true;
+        try { connect.places = (await getJson(`/api/connection/places?trip=${encodeURIComponent(j.tripId)}`)).places; } catch { connect.places = []; }
+        if (j.tripId !== connect.trip) return;
+        // Following a bus for this train: open where you were. Otherwise you pick the station.
+        connect.at = connect.follow?.train === j.tripId ? connect.follow.at : '';
     }
-    if (connectVia && options.includes(connectVia)) loadConnect();
+    // Only stations still ahead of the train
+    const ahead = new Set(j.stops.filter((s) => s.state !== 'passed').map((s) => s.sequence));
+    const places = connect.places.filter((p) => ahead.has(p.sequence));
+    box.hidden = places.length === 0;
+    if (box.hidden) return;
+    const sel = $('connect-at');
+    const opts = '<option value="">Pick a station…</option>' + places.map((p) => `<option value="${escapeHtml(p.station)}">${escapeHtml(p.name)}</option>`).join('');
+    if (sel.dataset.trip !== j.tripId || sel.options.length !== places.length + 1) { sel.innerHTML = opts; sel.dataset.trip = j.tripId; }
+    if (!places.some((p) => p.station === connect.at)) connect.at = '';
+    sel.value = connect.at;
+    $('connect-tools').hidden = !connect.at;
+    if (connect.at) loadConnect();
 }
 
 async function loadConnect() {
-    const out = $('connect-out');
-    const tripId = connectTrip;
+    const tripId = connect.trip;
+    const at = connect.at;
     try {
-        const c = await getJson(`/api/connection?trip=${encodeURIComponent(tripId)}&via=${connectVia}`);
-        if (tripId !== connectTrip) return;
-        const [title, why] = VERDICT[c.verdict] ?? VERDICT.none;
-        const trainLate = c.train.delaySecs !== null && c.train.delaySecs >= 60;
-        const bus = c.catch;
-        const busLine = bus
-            ? `${c.verdict === 'miss' ? 'Next bus' : 'Bus'} ${escapeHtml(c.route)} leaves ${escapeHtml(bus.leaves)}${bus.live ? '' : ' (timetable)'} · ${bus.spareMins} min${bus.spareMins === 1 ? '' : 's'} to spare`
-            : '';
-        const after = c.next ? ` Then ${escapeHtml(c.next.leaves)}.` : '';
-        out.innerHTML = `<div class="verdict ${escapeHtml(c.verdict)}">
-            <b>${title}</b>
-            <span>${why}</span>
-            <span>Train at ${escapeHtml(c.via)} ${escapeHtml(c.train.arrives)}${trainLate ? ` (${Math.round(c.train.delaySecs / 60)} late)` : ''}, ${c.walkMins} min walk, ready ${escapeHtml(c.ready)}.</span>
-            ${busLine ? `<span>${busLine}.${after}</span>` : ''}
-            <small>${c.busLive ? 'Live delays where TransLink has them.' : 'Bus times are the timetable right now.'}</small>
-        </div>`;
+        const to = connect.to;
+        const c = await getJson(`/api/connection?trip=${encodeURIComponent(tripId)}&at=${encodeURIComponent(at)}${to ? `&to=${encodeURIComponent(to.id)}` : ''}`);
+        if (tripId !== connect.trip || at !== connect.at || to !== connect.to) return;
+        connect.data = c;
+        renderConnect();
     } catch (err) {
-        out.innerHTML = `<p class="field-error">${escapeHtml(err.message && !/^HTTP/.test(err.message) ? err.message : 'Can’t check the connection right now.')}</p>`;
+        $('connect-list').innerHTML = '';
+        $('connect-more').hidden = true;
+        $('connect-out').innerHTML = `<p class="field-error">${escapeHtml(err.message && !/^HTTP/.test(err.message) ? err.message : 'Can’t check the buses right now.')}</p>`;
     }
 }
 
-$('connect-seg').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-via]');
-    if (!b) return;
-    connectVia = b.dataset.via;
-    for (const x of $('connect-seg').querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b));
-    $('connect-out').innerHTML = '<p class="muted">Checking…</p>';
-    loadConnect();
+const minsText = (n) => `${n} min${n === 1 ? '' : 's'}`;
+function busRow(b) {
+    const late = b.delaySecs >= 60 ? Math.round(b.delaySecs / 60) : 0;
+    const spare = b.status === 'miss' ? 'leaves before you get there' : b.spareMins < 1 ? 'just in time' : `${minsText(b.spareMins)} to spare`;
+    const stand = `${escapeHtml(b.stop)}${b.platform ? `, platform ${escapeHtml(b.platform)}` : ''}`;
+    return `<button type="button" class="bus-row" data-bus="${escapeHtml(b.tripId)}" aria-expanded="${connect.open === b.tripId}">
+        <span class="when">${escapeHtml(b.leaves)}${late ? `<s>${escapeHtml(b.scheduled)}</s>` : ''}</span>
+        <span class="what"><span class="route" style="background:${escapeHtml(b.color)};color:${escapeHtml(b.textColor)}">${escapeHtml(b.route)}</span><span>${escapeHtml(b.headsign)}</span></span>
+        <span class="badge ${escapeHtml(b.status)}">${STATUS[b.status]}</span>
+        <span class="where">${stand} · ${b.walkOnStreets ? '' : '~'}${minsText(b.walkMins)} walk · ${spare}${b.arrives ? ` · gets to ${escapeHtml(connect.data?.to ?? '')} ${escapeHtml(b.arrives)}` : ''}</span>
+    </button>`;
+}
+
+function renderConnect() {
+    const c = connect.data;
+    if (!c) return;
+    const trainLate = c.train.delaySecs !== null && c.train.delaySecs >= 60;
+    const q = connect.q.trim().toLowerCase();
+    let list = c.buses;
+    if (q) list = list.filter((b) => b.route.toLowerCase() === q || b.route.toLowerCase().startsWith(q));
+    // The bus you follow stays on top, even when a filter would hide it
+    const followed = connect.follow?.train === connect.trip && connect.follow.at === connect.at
+        ? c.buses.find((b) => b.tripId === connect.follow.bus) : null;
+    if (followed) list = [followed, ...list.filter((b) => b !== followed)];
+    const limit = connect.more ? list.length : 8;
+    $('connect-out').innerHTML = `<p class="follow-note">Train at ${escapeHtml(c.station)} ${escapeHtml(c.train.arrives)}${trainLate ? ` (${Math.round(c.train.delaySecs / 60)} min late)` : ''}${c.train.platform ? `, platform ${escapeHtml(c.train.platform)}` : ''}. ${c.busLive ? 'Live bus delays where TransLink has them.' : 'Bus times are the timetable right now.'}</p>`
+        + (connect.follow?.train === connect.trip && connect.follow.at === connect.at && !followed ? '<p class="field-error">The bus you followed has left or isn’t running.</p>' : '')
+        + (followed?.status === 'miss' ? `<p class="field-error">The bus you follow now leaves before you get there.${(() => { const n = c.buses.find((b) => b.status !== 'miss' && b.route === followed.route); return n ? ` Next ${escapeHtml(n.route)}: ${escapeHtml(n.leaves)}.` : ''; })()}</p>` : '')
+        + (list.length === 0 ? `<p class="muted">${c.to && !q ? `No bus from here goes to ${escapeHtml(c.to)} in the next 40 minutes. Try Plan this trip for routes with a change.` : 'No buses match.'}</p>` : '');
+    $('connect-list').innerHTML = list.slice(0, limit).map((b) => `<li class="${b === followed ? 'followed' : ''}">${busRow(b)}${connect.open === b.tripId ? '<div class="bus-detail" data-detail><p class="muted">Loading stops…</p></div>' : ''}</li>`).join('');
+    $('connect-more').hidden = list.length <= limit;
+    if (connect.open && list.slice(0, limit).some((b) => b.tripId === connect.open)) loadBusDetail(c.buses.find((b) => b.tripId === connect.open));
+}
+
+// The bus's stops from where you get on: a line with a dot per stop, times lined up on the right.
+// Long trips show the first 6 and the last; "Show all stops" opens the rest.
+function stopList(stops, b) {
+    const toName = connect.data?.to;
+    const dest = (s) => b.offSequence !== null && s.sequence === b.offSequence;
+    const row = (s, i) => `<li class="${i === 0 ? 'geton' : ''}${dest(s) ? ' dest' : ''}"><span class="n">${escapeHtml(s.name)}${i === 0 ? ' <em>get on</em>' : dest(s) && toName ? ' <em>get off</em>' : ''}</span><span class="t">${escapeHtml((s.expected ?? s.scheduled).replace(' ', '\u00a0'))}</span></li>`;
+    // Folded: the first 6, where you get off, and the last stop; a "Show all" link stands in for each gap
+    const keep = new Set([0, 1, 2, 3, 4, 5, stops.length - 1, stops.findIndex(dest)]);
+    const folded = !connect.allStops && stops.length > 8;
+    const gap = `<li class="gap"><button type="button" class="link-btn" data-allstops>Show all ${stops.length} stops</button></li>`;
+    const shown = [];
+    stops.forEach((s, i) => {
+        if (!folded || keep.has(i)) shown.push(row(s, i));
+        else if (keep.has(i - 1)) shown.push(gap);
+    });
+    return `<ol class="bus-stops" style="--c:${escapeHtml(b.color)}">${shown.join('')}</ol>`;
+}
+
+// One bus: its live delay, where it stands, every stop from here on with times, and Follow
+async function loadBusDetail(b) {
+    const box = $('connect-list').querySelector('[data-detail]');
+    if (!box) return;
+    try {
+        const t = await getJson(`/api/trips/${encodeURIComponent(b.tripId)}`);
+        if (connect.open !== b.tripId) return;
+        const from = t.stops.findIndex((s) => s.name === b.stop || s.sequence === b.sequence);
+        const stops = from === -1 ? t.stops : t.stops.slice(from);
+        const live = b.live ? (b.delaySecs >= 60 ? `Running ${minsText(Math.round(b.delaySecs / 60))} late` : b.delaySecs <= -60 ? `Running ${minsText(Math.round(-b.delaySecs / 60))} early` : 'On time') : 'No live prediction for this bus yet: timetable time';
+        const on = connect.follow?.bus === b.tripId && connect.follow.train === connect.trip;
+        connect.lastStop = stops.length ? stops[stops.length - 1] : null;
+        box.innerHTML = `<p><b>${escapeHtml(live)}.</b> Leaves ${escapeHtml(b.leaves)} from ${escapeHtml(b.stop)}${b.platform ? `, platform ${escapeHtml(b.platform)}` : ''}, ${minsText(b.walkMins)} walk from the train.</p>
+            ${b.walkOnStreets ? '' : '<p class="follow-note">~ The walk is a straight-line estimate: no street route was found for it.</p>'}
+            <div class="bus-actions">
+                <button type="button" class="follow-btn" data-follow="${escapeHtml(b.tripId)}" aria-pressed="${on}">${on ? 'Following this bus' : 'Follow this bus'}</button>
+                <button type="button" class="follow-btn" data-plan="${escapeHtml(b.tripId)}">Plan this trip</button>
+            </div>
+            ${on ? '<p class="follow-note">It stays at the top and is re-checked every 30 seconds while this train is open.</p>' : ''}
+            ${stopList(stops, b)}`;
+    } catch {
+        box.innerHTML = '<p class="field-error">Can’t load this bus’s stops right now.</p>';
+    }
+}
+
+// "Plan this trip": the Plan tab, from the station you change at, leaving in time for this bus,
+// to where you said you're going (otherwise to where the bus ends). The planner walks along
+// real streets and may find something better than this bus; that's the point of checking.
+function planFromBus(b) {
+    if (!b || !connect.data) return;
+    const end = connect.lastStop;
+    const to = connect.to ?? (end?.stationId ? { id: end.stationId, name: end.name } : null);
+    if (!to) return;
+    const from = { id: connect.at, name: connect.data.station };
+    // The planner reads the boxes, so the names must be ones it can find
+    for (const p of [from, to]) if (!stations.some((s) => s.id === p.id)) stations.push({ ...p, modes: p.id.startsWith('landmark:') ? 'place' : 'bus' });
+    showTab('plan');
+    $('plan-from').value = from.name;
+    $('plan-to').value = to.name;
+    plan.from = from;
+    plan.to = to;
+    $('plan-when').value = b.planAt;
+    findJourneys();
+    window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+}
+
+$('connect-at').addEventListener('change', (e) => {
+    connect.at = e.target.value;
+    connect.open = null;
+    connect.more = false;
+    connect.data = null;
+    $('connect-tools').hidden = !connect.at;
+    $('connect-list').innerHTML = '';
+    $('connect-more').hidden = true;
+    $('connect-out').innerHTML = connect.at ? '<p class="muted">Checking buses…</p>' : '';
+    if (connect.at) loadConnect();
+});
+// Going to: any station, stop or place (optional). Only buses that go there are shown, with when they get there.
+stationSearchBox('connect-to', 'connect-to-list');
+function setConnectTo(to) {
+    connect.to = to;
+    $('connect-to-clear').hidden = !to;
+    $('connect-out').innerHTML = '<p class="muted">Checking buses…</p>';
+    $('connect-list').innerHTML = '';
+    if (connect.at) loadConnect();
+}
+$('connect-to').addEventListener('change', (e) => {
+    // Leaving the box fires change again: nothing to do if it's the same place
+    if (e.target.value.trim() === (connect.to?.name ?? '')) return;
+    const f = findStation(e.target.value);
+    if (!e.target.value.trim()) return setConnectTo(null);
+    if (f.several) { $('connect-out').innerHTML = `<p class="field-error">More than one place matches: ${escapeHtml(f.several.join(', '))}. Pick one from the list.</p>`; return; }
+    if (!f.match) { $('connect-out').innerHTML = '<p class="field-error">Can’t find that place. Start typing and pick it from the list.</p>'; return; }
+    e.target.value = f.match.name;
+    setConnectTo({ id: f.match.id, name: f.match.name });
+});
+$('connect-to-clear').addEventListener('click', () => { $('connect-to').value = ''; setConnectTo(null); });
+$('connect-q').addEventListener('input', (e) => { connect.q = e.target.value; renderConnect(); });
+$('connect-more').addEventListener('click', () => { connect.more = true; renderConnect(); });
+$('connect-list').addEventListener('click', (e) => {
+    const f = e.target.closest('[data-follow]');
+    if (f) {
+        const on = f.getAttribute('aria-pressed') === 'true';
+        connect.follow = on ? null : { train: connect.trip, at: connect.at, bus: f.dataset.follow };
+        saveFollow();
+        renderConnect();
+        return;
+    }
+    if (e.target.closest('[data-allstops]')) { connect.allStops = true; renderConnect(); return; }
+    const planBtn = e.target.closest('[data-plan]');
+    if (planBtn) { planFromBus(connect.data.buses.find((b) => b.tripId === planBtn.dataset.plan)); return; }
+    const row = e.target.closest('[data-bus]');
+    if (!row) return;
+    connect.open = connect.open === row.dataset.bus ? null : row.dataset.bus;
+    connect.allStops = false;
+    renderConnect();
 });
 
 async function loadJourney() {
@@ -582,6 +858,10 @@ async function loadJourney() {
 
 function closeJourney() {
     state.selected = null;
+    setFollowVehicle(false);
+    journeyPath = null;
+    removeVehicleDot();
+    map.getContainer().classList.remove('has-journey');
     journeyLayer.clearLayers();
     journeyFitted = null;
     hideWithExit($('journey'), 180);

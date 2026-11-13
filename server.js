@@ -7,9 +7,9 @@ import { enrichTrains, nextStop, summarize, buildBoard, railAlerts, buildTripPro
 import { brisbaneClock, parseLocalTime, formatClock, delayAtStop } from './schedule.js';
 import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
-import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX } from './landmarks.js';
+import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX, LANDMARKS } from './landmarks.js';
 import { walkRoute, roadPath } from './walk.js';
-import { CHANGES, planConnection, formatSecs } from './connection.js';
+import { formatSecs, busesAfterTrain, walkSecsFor, streetWalkSecs, NEAR_BUS_M } from './connection.js';
 import { distanceM, EXTRA_CHANGE_SECS } from './raptor.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -183,63 +183,180 @@ app.get('/api/stations', handle(async (req, res) => {
 // Works out when the train really reaches the change station (timetable + live delay), adds the walk,
 // and checks the next buses on the route from there (with their own live delays): Make it / Tight / Miss,
 // the bus to catch and the one after. Rules and tests: connection.js and docs/connections.md.
+// Train + bus at any station (docs/connections.md).
+// The bus stations within a short walk of a train station, with the walk for each. Kept per station.
+const nearBusCache = new Map();
+// With street walks. Each walk the router finds is kept (walk.js caches it); a stop it couldn't route
+// to keeps the straight-line estimate and is tried again after 10 minutes, so one bad moment
+// (the free router refusing a burst) doesn't stick.
+const walkFailedAt = new Map();
+async function nearBusWalks(stationId) {
+    const { stations } = await getStatic();
+    const here = stations.find((s) => s.id === stationId);
+    const list = (await nearBusStations(stationId)).map((n) => ({ ...n }));
+    // Two at a time: the free router refuses a burst of requests from one place
+    const queue = list.filter((n) => !(Date.now() - (walkFailedAt.get(n.id) ?? 0) < 10 * 60 * 1000));
+    await Promise.all([0, 1].map(async () => {
+        for (let n = queue.shift(); n; n = queue.shift()) {
+            try {
+                // Along real streets; the router doesn't know stairs, so the 90 s off the platform stay
+                const r = await walkRoute(here, n, { distanceM });
+                if (r) { n.walkSecs = streetWalkSecs(r.secs); n.streets = true; } else walkFailedAt.set(n.id, Date.now());
+            } catch (err) {
+                walkFailedAt.set(n.id, Date.now());
+                console.error('Walk to bus stop:', err.message);
+            }
+        }
+    }));
+    return list;
+}
+async function nearBusStations(stationId) {
+    if (nearBusCache.has(stationId)) return nearBusCache.get(stationId);
+    const { stations } = await getStatic();
+    const here = stations.find((s) => s.id === stationId);
+    const out = [];
+    if (here && here.lat !== null) {
+        for (const s of stations) {
+            if (!s.modes.split(',').includes('bus') || s.lat === null) continue;
+            const m = distanceM(here.lat, here.lng, s.lat, s.lng);
+            if (m > NEAR_BUS_M) continue;
+            out.push({ id: s.id, name: s.name, lat: s.lat, lng: s.lng, walkSecs: walkSecsFor(m), streets: false });
+        }
+    }
+    nearBusCache.set(stationId, out);
+    return out;
+}
+
+// Where you're going after the bus (optional, any station, stop or place you pick): the stations
+// around it. A place like a campus covers 800 m (like the planner); a station or stop, 300 m
+// (the other platforms and stops of the same interchange).
+async function stationsAround(placeId) {
+    const { stations } = await getStatic();
+    const id = String(placeId ?? '');
+    let centre = null;
+    let radius = 300;
+    if (id.startsWith(LANDMARK_PREFIX)) {
+        const l = LANDMARKS.find((x) => LANDMARK_PREFIX + x.id === id);
+        centre = l && stations.find((s) => s.id === l.anchor);
+        radius = 800;
+    } else centre = stations.find((s) => s.id === id);
+    if (!centre || centre.lat === null) return null;
+    const name = id.startsWith(LANDMARK_PREFIX) ? LANDMARKS.find((x) => LANDMARK_PREFIX + x.id === id).name : centre.name;
+    return { name, ids: stations.filter((s) => s.lat !== null && distanceM(centre.lat, centre.lng, s.lat, s.lng) <= radius).map((s) => s.id) };
+}
+
+// Where on this train you could change to a bus: GET /api/connection/places?trip=…
+app.get('/api/connection/places', handle(async (req, res) => {
+    const stops = await db.getTripStops(String(req.query.trip ?? ''));
+    if (stops.length === 0) return res.status(404).json({ error: 'No trip with that id' });
+    const places = [];
+    for (const s of stops.slice(1)) {
+        const near = await nearBusStations(s.station_id);
+        if (near.length) places.push({ station: s.station_id, name: s.name.replace(/ station$/, ''), sequence: s.stop_sequence });
+    }
+    res.json({ places });
+}));
+
+// "2026-11-13", 80100 -> "2026-11-13T22:15" (past midnight moves to the next day)
+function planTime(date, secs) {
+    const d = new Date(`${date}T00:00:00Z`);
+    d.setUTCSeconds(Math.max(0, secs));
+    return d.toISOString().slice(0, 16);
+}
+
+// Every bus leaving near this station after the train gets there:
+// GET /api/connection?trip=…&at=<station id>[&to=<station, stop or place id>]. Each with Make it / Tight /
+// Miss for its own walk; with to=, only buses that go there, with when they get there.
 app.get('/api/connection', handle(async (req, res) => {
-    const change = CHANGES[String(req.query.via ?? '')];
-    if (!change) return res.status(400).json({ error: 'via must be one of: ' + Object.keys(CHANGES).join(', ') });
     const tripId = String(req.query.trip ?? '');
+    const stationId = String(req.query.at ?? '');
     const stops = await db.getTripStops(tripId);
     if (stops.length === 0) return res.status(404).json({ error: 'No trip with that id' });
-    const at = stops.find((s) => s.station_id === change.stationId);
-    if (!at) return res.status(400).json({ error: `This trip doesn't stop at ${change.name}` });
+    const at = stops.find((s) => s.station_id === stationId);
+    if (!at) return res.status(400).json({ error: 'This train doesn’t stop there' });
+    const near = await nearBusWalks(stationId);
+    if (near.length === 0) return res.status(400).json({ error: `No bus stops within a short walk of ${at.name}` });
 
-    const [main, bus, now] = await Promise.all([getTripUpdates(), getBusTripUpdates().catch(() => null), nowSec()]);
+    const [main, bus, now, dest] = await Promise.all([getTripUpdates(), getBusTripUpdates().catch(() => null), nowSec(), req.query.to ? stationsAround(req.query.to) : null]);
+    if (req.query.to && !dest) return res.status(400).json({ error: 'Can’t find where you’re going. Pick it from the list.' });
+    const target = dest?.ids ?? [];
     const trainDelay = delayAtStop(main.data.get(tripId), at.stop_sequence).delay;
     const train = { arrivalSecs: at.arrival_secs, delaySecs: trainDelay ?? 0 };
-    const ready = train.arrivalSecs + train.delaySecs + change.walkSecs;
+    const arrive = train.arrivalSecs + train.delaySecs;
 
-    // Buses on the route from the change stop, from 10 minutes before you're ready to 90 minutes after
+    // Buses from 5 minutes before the train gets in (a late bus may still be there) to 40 minutes after
     const { date } = brisbaneClock(now);
-    // Departures are looked up by station; a busway platform like 10792 belongs to the busway station,
-    // so ask for that station and keep only the platform where this route leaves from
-    const station = await db.getStationOfStop(change.fromStop);
-    const rows = station
-        ? (await db.getDepartures(station, date, ready - 600, ready + 5400, 80))
-            .filter((r) => r.short_name === change.route && r.stop_id === change.fromStop)
-        : [];
-    const buses = rows.map((r) => ({
-        tripId: r.trip_id,
-        departSecs: r.secs,
-        delaySecs: bus ? delayAtStop(bus.data.get(r.trip_id), r.stop_sequence).delay ?? 0 : 0,
-        live: Boolean(bus?.data.get(r.trip_id)),
+    const walk = new Map(near.map((n) => [n.id, n]));
+    const rows = (await db.getDepartures(near.map((n) => n.id), date, arrive - 300, arrive + 2400, 200))
+        .filter((r) => r.mode === 'bus');
+    const list = busesAfterTrain(train, rows.map((r) => {
+        const st = walk.get(r.station_id);
+        return {
+            tripId: r.trip_id,
+            departSecs: r.secs,
+            delaySecs: bus ? delayAtStop(bus.data.get(r.trip_id), r.stop_sequence).delay ?? 0 : 0,
+            live: Boolean(bus?.data.get(r.trip_id)),
+            walkSecs: st?.walkSecs ?? walkSecsFor(NEAR_BUS_M),
+            streets: st ? st.streets : false,
+            stopName: st?.name ?? '',
+            platform: r.platform,
+            sequence: r.stop_sequence,
+            route: r.short_name,
+            headsign: r.headsign,
+            color: `#${r.color}`,
+            textColor: `#${r.text_color}`,
+        };
     }));
-    const live = new Map(buses.map((b) => [b.tripId, b.live]));
-    const p = planConnection(train, change.walkSecs, buses);
-    const out = (o) => o && {
-        tripId: o.tripId,
-        leaves: formatSecs(o.leavesSecs),
-        scheduled: formatSecs(o.scheduledSecs),
-        delaySecs: o.delaySecs,
-        spareMins: Math.round(o.spareSecs / 60),
-        status: o.status,
-        live: live.get(o.tripId) ?? false,
+    // Buses you can catch, plus the last two you'd just miss (so a late train shows what it cost you)
+    const ok = list.filter((b) => b.status !== 'miss');
+    const firstOk = ok.length ? list.indexOf(ok[0]) : list.length;
+    const missed = list.slice(0, firstOk).filter((b) => b.status === 'miss').slice(-2);
+    const shown = [...missed, ...ok].slice(0, 40);
+
+    // When each bus gets to where you're going (if you said), and only if it goes there
+    const calls = await db.getCallsAt([...new Set(shown.map((b) => b.tripId))], [...target, ...near.map((n) => n.id)]);
+    const targetSet = new Set(target);
+    const arrivesAt = (b) => {
+        const mine = calls.filter((c) => c.trip_id === b.tripId);
+        const board = mine.find((c) => c.stop_sequence === b.sequence);
+        const there = mine.filter((c) => targetSet.has(c.station_id) && c.stop_sequence > b.sequence)
+            .sort((x, y) => x.arrival_secs - y.arrival_secs)[0];
+        return board && there ? { secs: b.leavesSecs + (there.arrival_secs - board.departure_secs), sequence: there.stop_sequence } : null;
     };
+
     res.json({
-        via: change.name,
-        route: change.route,
+        station: at.name.replace(/ station$/, ''),
+        to: dest ? dest.name : null,
         train: {
             tripId,
-            arrives: formatSecs(train.arrivalSecs + train.delaySecs),
+            arrives: formatSecs(arrive),
             scheduled: formatSecs(train.arrivalSecs),
             delaySecs: trainDelay,
             platform: at.platform,
         },
-        walkMins: Math.round(change.walkSecs / 60),
-        ready: formatSecs(p.readySecs),
-        verdict: p.verdict,
-        planned: out(p.planned),
-        catch: out(p.catch),
-        next: out(p.next),
-        waitMins: p.waitSecs === null ? null : Math.round(p.waitSecs / 60),
+        buses: shown.map((b) => ({ b, n: target.length ? arrivesAt(b) : null })).filter(({ n }) => !target.length || n !== null).map(({ b, n }) => {
+            return {
+                tripId: b.tripId,
+                route: b.route,
+                headsign: b.headsign,
+                color: b.color,
+                textColor: b.textColor,
+                stop: b.stopName,
+                platform: b.platform,
+                walkMins: Math.round(b.walkSecs / 60),
+                scheduled: formatSecs(b.departSecs),
+                leaves: formatSecs(b.leavesSecs),
+                delaySecs: b.delaySecs,
+                live: b.live,
+                spareMins: Math.round(b.spareSecs / 60),
+                status: b.status,
+                arrives: n === null ? null : formatSecs(n.secs),
+                offSequence: n === null ? null : n.sequence,
+                walkOnStreets: b.streets,
+                // For "Plan this trip": leave the platform in time for this bus (Brisbane date and time)
+                planAt: planTime(date, b.leavesSecs - b.walkSecs),
+            };
+        }),
         busLive: Boolean(bus),
     });
 }));
@@ -491,7 +608,7 @@ app.get('/api/shapes', handle(async (req, res) => {
 // One train's journey: every stop with scheduled and expected times
 app.get('/api/trips/:tripId', handle(async (req, res) => {
     const tripId = req.params.tripId;
-    const [trips, stops] = await Promise.all([db.getTrips([tripId]), db.getTripStops(tripId)]);
+    const [trips, stops, shapes] = await Promise.all([db.getTrips([tripId]), db.getTripStops(tripId), db.getTripShapes([tripId]).catch(() => new Map())]);
     const trip = trips.get(tripId);
     if (!trip || stops.length === 0) {
         return res.status(404).json({ error: 'Trip not found' });
@@ -513,6 +630,8 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
         textColor: `#${trip.text_color}`,
         now,
         stops: buildTripProgress(stops, updates.data.get(tripId), now, dayStart),
+        // The track the trip really follows (rails, roads, river), when TransLink publishes it
+        path: shapes.get(tripId) ?? null,
     });
 }));
 

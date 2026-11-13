@@ -24,6 +24,36 @@ export const CHANGES = {
   },
 };
 
+// Any station: the bus stops you can walk to from the platform, and how long the walk takes.
+// Straight-line distance is stretched by a quarter for real paths and walked at 1.25 m/s (4.5 km/h),
+// so one metre takes one second; plus 90 seconds to get off the platform. Rounded up to whole minutes.
+export const NEAR_BUS_M = 450;
+export function walkSecsFor(distanceM) {
+  return Math.ceil((90 + distanceM) / 60) * 60;
+}
+// The same walk measured along streets by the walking router: its time plus the 90 seconds off the platform
+export function streetWalkSecs(routeSecs) {
+  return Math.ceil((90 + routeSecs) / 60) * 60;
+}
+
+// Every bus leaving the stops near the station, each with its own walk, newest rules:
+// buses: [{ tripId, departSecs, delaySecs, walkSecs, ... }]. A bus that calls at two nearby stops
+// is kept once, at the stop you'd reach first in time to catch it. Sorted by when they leave.
+export function busesAfterTrain(train, buses) {
+  const arrive = train.arrivalSecs + (train.delaySecs || 0);
+  const best = new Map();
+  for (const b of buses) {
+    const delay = b.delaySecs || 0;
+    const leaves = b.departSecs + delay;
+    const ready = arrive + b.walkSecs;
+    const o = { ...b, delaySecs: delay, leavesSecs: leaves, readySecs: ready, spareSecs: leaves - ready, status: classify(ready, leaves) };
+    const old = best.get(b.tripId);
+    const better = !old || (old.status === 'miss' && o.status !== 'miss') || (old.status === o.status && o.walkSecs < old.walkSecs);
+    if (better) best.set(b.tripId, o);
+  }
+  return [...best.values()].sort((a, b) => a.leavesSecs - b.leavesSecs || a.walkSecs - b.walkSecs);
+}
+
 // Make it: the bus leaves 3 minutes or more after you're ready.
 export const TIGHT_SECS = 3 * 60;
 
