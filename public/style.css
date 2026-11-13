@@ -651,6 +651,13 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .verdict.make { --c: var(--ontime); } .verdict.tight { --c: var(--late); } .verdict.miss, .verdict.none { --c: var(--verylate); }
 
 /* "Follow" on the map: shown after you drag the map away from the vehicle you opened */
-.follow-map-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: var(--ink); color: #fff; font: inherit; font-weight: 800; font-size: 0.85rem; box-shadow: var(--shadow); cursor: pointer; }
+.follow-map-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: var(--paper); color: var(--ink); font: inherit; font-weight: 800; font-size: 0.85rem; box-shadow: var(--shadow); cursor: pointer; }
 .follow-map-btn span { margin-right: 4px; }
+.follow-map-btn[aria-pressed="true"] { background: var(--ink); color: #fff; }
 .follow-map-btn:focus-visible { outline: 2px solid var(--gum); outline-offset: 2px; }
+
+/* An open trip: its line and vehicle stand out, the rest of the network fades back */
+#map .leaflet-overlay-pane, #map .leaflet-marker-pane { transition: opacity 250ms; }
+#map.has-journey .leaflet-overlay-pane { opacity: 0.4; }
+#map.has-journey .leaflet-marker-pane { opacity: 0.55; }
+#map.is-planning .leaflet-journey-pane, #map.is-planning .leaflet-vehicle-pane { display: none; }

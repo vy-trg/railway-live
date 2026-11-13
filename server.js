@@ -608,7 +608,7 @@ app.get('/api/shapes', handle(async (req, res) => {
 // One train's journey: every stop with scheduled and expected times
 app.get('/api/trips/:tripId', handle(async (req, res) => {
     const tripId = req.params.tripId;
-    const [trips, stops] = await Promise.all([db.getTrips([tripId]), db.getTripStops(tripId)]);
+    const [trips, stops, shapes] = await Promise.all([db.getTrips([tripId]), db.getTripStops(tripId), db.getTripShapes([tripId]).catch(() => new Map())]);
     const trip = trips.get(tripId);
     if (!trip || stops.length === 0) {
         return res.status(404).json({ error: 'Trip not found' });
@@ -630,6 +630,8 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
         textColor: `#${trip.text_color}`,
         now,
         stops: buildTripProgress(stops, updates.data.get(tripId), now, dayStart),
+        // The track the trip really follows (rails, roads, river), when TransLink publishes it
+        path: shapes.get(tripId) ?? null,
     });
 }));
 

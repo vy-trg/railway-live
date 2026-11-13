@@ -199,6 +199,8 @@ function routeVisible(train) {
 
 function markerStyle(t) {
     const selected = t.tripId === state.selected;
+    // The open vehicle is drawn above its journey line instead (drawVehicleDot)
+    if (selected) return { radius: 7, weight: 0, opacity: 0, fillOpacity: 0 };
     // Buses are smaller: there can be a thousand of them
     const bus = t.mode === 'bus';
     return {
@@ -211,15 +213,18 @@ function markerStyle(t) {
 }
 
 // Trains glide to their new position over 1.2 s (ease-in-out) instead of jumping every 30 s
-function glide(marker, to) {
+// ms / linear: the open vehicle moves steadily over most of the 30 seconds until the next position
+// (so it, and the map following it, keep moving instead of jumping every 30 seconds)
+function glide(marker, to, onFrame, { ms = 1200, linear = false } = {}) {
     const from = marker.getLatLng();
-    if (reduceMotion() || (from.lat === to[0] && from.lng === to[1])) { marker.setLatLng(to); return; }
+    if (reduceMotion() || (from.lat === to[0] && from.lng === to[1])) { marker.setLatLng(to); onFrame?.(marker.getLatLng()); return; }
     cancelAnimationFrame(marker.glideFrame);
     const start = performance.now();
-    const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
+    const ease = linear ? (x) => x : (x) => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
     const step = (now) => {
-        const k = ease(Math.min(1, (now - start) / 1200));
+        const k = ease(Math.min(1, (now - start) / ms));
         marker.setLatLng([from.lat + (to[0] - from.lat) * k, from.lng + (to[1] - from.lng) * k]);
+        onFrame?.(marker.getLatLng());
         if (k < 1) marker.glideFrame = requestAnimationFrame(step);
     };
     marker.glideFrame = requestAnimationFrame(step);
@@ -242,6 +247,7 @@ function shapeIcon(t) {
 
 function drawTrains() {
     const seen = new Set();
+    let selectedSeen = false;
     for (const t of lastTrains) {
         if (!routeVisible(t)) continue;
         seen.add(t.id);
@@ -252,7 +258,7 @@ function drawTrains() {
         if (existing) {
             glide(existing, [t.lat, t.lng]);
             if (isCircle(t.mode)) existing.setStyle(markerStyle(t));
-            else existing.setIcon(shapeIcon(t));
+            else { existing.setIcon(shapeIcon(t)); existing.setOpacity(t.tripId === state.selected ? 0 : 1); }
             existing.setTooltipContent(escapeHtml(tip));
         } else {
             const m = (isCircle(t.mode)
@@ -265,11 +271,12 @@ function drawTrains() {
         }
         trainMarkers.get(t.id).trainTripId = t.tripId;
         if (t.tripId === state.selected) {
-            const sel = trainMarkers.get(t.id);
-            if (sel.bringToFront) sel.bringToFront(); else sel.setZIndexOffset(1000);
-            keepInView([t.lat, t.lng]);
+            selectedSeen = true;
+            drawVehicleDot(t);
         }
     }
+    if (!selectedSeen) removeVehicleDot();
+    showFollowBtn(selectedSeen);
     for (const [id, marker] of trainMarkers) {
         if (!seen.has(id)) {
             map.removeLayer(marker);
@@ -425,7 +432,10 @@ function hiddenBottom() {
     return Math.max(0, m.bottom - sheet.getBoundingClientRect().top);
 }
 // Go to a point, keeping it in the part of the map you can see
+let mapFlying = false;
+map.on('moveend', () => { mapFlying = false; });
 function focusMap(latlng, zoom) {
+    mapFlying = !reduceMotion();
     const z = Math.max(map.getZoom(), zoom);
     const shift = hiddenBottom() / 2;
     const target = shift ? map.unproject(map.project(latlng, z).add([0, shift]), z) : latlng;
@@ -434,13 +444,14 @@ function focusMap(latlng, zoom) {
     else map.flyTo(target, z, { duration: 0.6 });
 }
 function focusBounds(points, maxZoom) {
+    mapFlying = !reduceMotion();
     const pad = hiddenBottom();
     map.flyToBounds(points, { paddingTopLeft: [40, 40], paddingBottomRight: [40, 40 + pad], maxZoom, duration: reduceMotion() ? 0 : 0.8 });
 }
 
-// The map follows the vehicle you opened: when it gets near the edge of what you can see
-// (above the sheet on a phone), the map slides so it's back in the middle. Dragging the map
-// yourself stops that, and a "Follow" button on the map turns it back on.
+// The map follows the vehicle you opened: it stays in the middle of what you can see (above the
+// sheet on a phone) and the map slides along with it, frame by frame, as it glides to each new position.
+// The "Following" button on the map turns that off and on; dragging the map yourself turns it off.
 let followVehicle = false;
 const FollowBtn = L.Control.extend({
     options: { position: 'topright' },
@@ -448,12 +459,10 @@ const FollowBtn = L.Control.extend({
         const btn = L.DomUtil.create('button', 'follow-map-btn');
         btn.type = 'button';
         btn.hidden = true;
-        btn.innerHTML = '<span aria-hidden="true">◎</span> Follow';
         L.DomEvent.disableClickPropagation(btn);
         L.DomEvent.on(btn, 'click', () => {
-            setFollowVehicle(true);
-            const t = lastTrains.find((x) => x.tripId === state.selected);
-            if (t) focusMap([t.lat, t.lng], map.getZoom());
+            setFollowVehicle(!followVehicle);
+            if (followVehicle && vehicleDot) focusMap(vehicleDot.getLatLng(), map.getZoom());
         });
         return btn;
     },
@@ -461,26 +470,23 @@ const FollowBtn = L.Control.extend({
 const followBtn = new FollowBtn().addTo(map).getContainer();
 function setFollowVehicle(on) {
     followVehicle = on;
-    // The button only makes sense for a vehicle that's on the map right now
-    const live = state.selected && lastTrains.some((x) => x.tripId === state.selected);
-    followBtn.hidden = on || !live;
-    followBtn.setAttribute('aria-label', 'Follow this vehicle on the map');
+    followBtn.setAttribute('aria-pressed', String(on));
+    followBtn.innerHTML = `<span aria-hidden="true">◎</span> ${on ? 'Following' : 'Follow'}`;
+    followBtn.setAttribute('aria-label', on ? 'Stop following this vehicle' : 'Follow this vehicle on the map');
 }
-map.on('dragstart', () => { if (state.selected) setFollowVehicle(false); });
+// Shown only while the open trip's vehicle is on the map
+function showFollowBtn(on) { followBtn.hidden = !on; }
+map.on('dragstart', () => { if (followVehicle) setFollowVehicle(false); });
 function keepInView(latlng) {
-    if (!followVehicle) return;
-    const size = map.getSize();
-    const p = map.latLngToContainerPoint(latlng);
-    const bottom = size.y - hiddenBottom();
-    const margin = Math.min(80, size.x / 5, bottom / 5);
-    if (p.x > margin && p.x < size.x - margin && p.y > margin && p.y < bottom - margin) return;
+    if (!followVehicle || mapFlying) return; // not while the map is still flying to the vehicle
     const shift = hiddenBottom() / 2;
     const z = map.getZoom();
     const target = shift ? map.unproject(map.project(latlng, z).add([0, shift]), z) : latlng;
-    map.panTo(target, { animate: !reduceMotion(), duration: 1 });
+    map.setView(target, z, { animate: false });
 }
 
 async function selectTrain(tripId) {
+    if (tripId !== state.selected) { removeVehicleDot(); journeyPath = null; }
     state.selected = tripId;
     setFollowVehicle(true);
     showAllStops = false;
@@ -493,31 +499,91 @@ async function selectTrain(tripId) {
     await loadJourney();
 }
 
-// The selected journey's stops drawn on the map, so a departure you tap shows where it goes
+// The selected journey drawn on top of everything else in its own layer, so it can't be mixed up with
+// another line of the same colour: a dark outline, a white gap, then the line's colour, and the rest of
+// the map fades back. The vehicle itself sits on top of its line (its own layer, above the journey),
+// snapped onto the track when the GPS point is a little off it.
+map.createPane('journey').style.zIndex = 450;
+map.createPane('vehicle').style.zIndex = 460;
+const journeyRenderer = L.svg({ pane: 'journey' });
+const vehicleRenderer = L.svg({ pane: 'vehicle' });
 const journeyLayer = L.layerGroup().addTo(map);
 let journeyFitted = null; // trip id the map was last fitted to, so 30-second refreshes don't move the map
+let journeyPath = null; // [[lat, lng]...] of the open trip, for snapping its vehicle onto the track
+let vehicleDot = null;
 
 function drawJourney(j) {
     journeyLayer.clearLayers();
     const pts = j.stops.filter((s) => s.lat !== null);
     if (pts.length < 2) return;
-    const line = pts.map((s) => [s.lat, s.lng]);
-    L.polyline(line, { color: '#fffaf3', weight: 8, opacity: 0.95, interactive: false }).addTo(journeyLayer);
-    L.polyline(line, { color: j.color, weight: 4, opacity: 1, interactive: false }).addTo(journeyLayer);
+    const line = j.path && j.path.length > 1 ? j.path : pts.map((s) => [s.lat, s.lng]);
+    journeyPath = line;
+    const style = { pane: 'journey', renderer: journeyRenderer, interactive: false, lineCap: 'round', lineJoin: 'round' };
+    L.polyline(line, { ...style, color: '#23302a', weight: 11, opacity: 0.9 }).addTo(journeyLayer);
+    L.polyline(line, { ...style, color: '#fffaf3', weight: 8, opacity: 1 }).addTo(journeyLayer);
+    L.polyline(line, { ...style, color: j.color, weight: 5, opacity: 1 }).addTo(journeyLayer);
     for (const s of pts) {
         L.circleMarker([s.lat, s.lng], {
-            radius: s.state === 'next' ? 6 : 4, weight: 2, color: j.color,
+            pane: 'journey', renderer: journeyRenderer,
+            radius: s.state === 'next' ? 6 : 4, weight: 2, color: '#23302a',
             fillColor: s.state === 'passed' ? j.color : '#fffaf3', fillOpacity: 1,
         }).bindTooltip(`${escapeHtml(s.name)} · ${escapeHtml(s.expected ?? s.scheduled)}`).addTo(journeyLayer);
     }
+    map.getContainer().classList.add('has-journey');
+    drawTrains();
     if (journeyFitted === j.tripId) return;
     journeyFitted = j.tripId;
     // A running vehicle: go to it. Otherwise show the whole journey.
     const live = trainMarkers.size && lastTrains.find((t) => t.tripId === j.tripId);
-    if (live) focusMap([live.lat, live.lng], 13);
+    if (live) focusMap(onTrack([live.lat, live.lng]), 13);
     else focusBounds(line, 14);
 }
 
+// The closest point on the open trip's track, if the vehicle is within 150 m of it (GPS drifts;
+// a vehicle further away than that is shown where it says it is)
+function onTrack(latlng) {
+    if (!journeyPath) return latlng;
+    const z = map.getZoom();
+    const p = map.project(latlng, z);
+    let best = null;
+    for (let i = 1; i < journeyPath.length; i += 1) {
+        const a = map.project(journeyPath[i - 1], z);
+        const b = map.project(journeyPath[i], z);
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = dx * dx + dy * dy;
+        const k = len ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len)) : 0;
+        const q = L.point(a.x + k * dx, a.y + k * dy);
+        const d = q.distanceTo(p);
+        if (!best || d < best.d) best = { d, q };
+    }
+    if (!best) return latlng;
+    const snapped = map.unproject(best.q, z);
+    return map.distance(snapped, latlng) <= 150 ? [snapped.lat, snapped.lng] : latlng;
+}
+
+// The open vehicle, drawn above its journey line
+function drawVehicleDot(t) {
+    const style = { pane: 'vehicle', renderer: vehicleRenderer, radius: 9, weight: 3, color: '#fffaf3', fillColor: cssVar(LEVEL_VARS[t.level] ?? '--muted'), fillOpacity: 1, interactive: false };
+    const at = onTrack([t.lat, t.lng]);
+    if (!vehicleDot) {
+        vehicleDot = L.circleMarker(at, style).addTo(map);
+        vehicleDot.halo = L.circleMarker(at, { ...style, radius: 15, weight: 0, fillColor: '#23302a', fillOpacity: 0.18 }).addTo(map);
+        vehicleDot.halo.bringToBack();
+    } else {
+        vehicleDot.setStyle(style);
+        // A big jump (first update, or the vehicle moved a lot) goes quickly; normal moves take 25 s
+        const far = map.distance(vehicleDot.getLatLng(), at) > 3000;
+        glide(vehicleDot, at, (ll) => { vehicleDot?.halo.setLatLng(ll); keepInView(ll); }, far ? {} : { ms: 25000, linear: true });
+    }
+}
+function removeVehicleDot() {
+    if (!vehicleDot) return;
+    cancelAnimationFrame(vehicleDot.glideFrame);
+    map.removeLayer(vehicleDot.halo);
+    map.removeLayer(vehicleDot);
+    vehicleDot = null;
+}
 
 // ---------- Will I make my bus? (train + bus, docs/connections.md) ----------
 // On any train: pick a station ahead where you'll get off, and see every bus leaving nearby after
@@ -771,6 +837,9 @@ async function loadJourney() {
 function closeJourney() {
     state.selected = null;
     setFollowVehicle(false);
+    journeyPath = null;
+    removeVehicleDot();
+    map.getContainer().classList.remove('has-journey');
     journeyLayer.clearLayers();
     journeyFitted = null;
     hideWithExit($('journey'), 180);
