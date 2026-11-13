@@ -7,9 +7,9 @@ import { enrichTrains, nextStop, summarize, buildBoard, railAlerts, buildTripPro
 import { brisbaneClock, parseLocalTime, formatClock, delayAtStop } from './schedule.js';
 import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
-import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX } from './landmarks.js';
+import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX, LANDMARKS } from './landmarks.js';
 import { walkRoute, roadPath } from './walk.js';
-import { formatSecs, busesAfterTrain, walkSecsFor, streetWalkSecs, NEAR_BUS_M, KNOWN_WALKS } from './connection.js';
+import { formatSecs, busesAfterTrain, walkSecsFor, streetWalkSecs, NEAR_BUS_M } from './connection.js';
 import { distanceM, EXTRA_CHANGE_SECS } from './raptor.js';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -186,26 +186,29 @@ app.get('/api/stations', handle(async (req, res) => {
 // Train + bus at any station (docs/connections.md).
 // The bus stations within a short walk of a train station, with the walk for each. Kept per station.
 const nearBusCache = new Map();
-const streetWalkCache = new Map();
-// With street walks (slower the first time: one routing call per stop, then kept)
+// With street walks. Each walk the router finds is kept (walk.js caches it); a stop it couldn't route
+// to keeps the straight-line estimate and is tried again after 10 minutes, so one bad moment
+// (the free router refusing a burst) doesn't stick.
+const walkFailedAt = new Map();
 async function nearBusWalks(stationId) {
-    if (!streetWalkCache.has(stationId)) streetWalkCache.set(stationId, (async () => {
-        const { stations } = await getStatic();
-        const here = stations.find((s) => s.id === stationId);
-        const list = (await nearBusStations(stationId)).map((n) => ({ ...n }));
-        // Along real streets where the walking router knows the way (it doesn't know stairs, so the
-        // 90 seconds off the platform stay). A stop it can't route to keeps the straight-line estimate.
-        await Promise.all(list.filter((n) => !(n.id in KNOWN_WALKS)).map(async (n) => {
+    const { stations } = await getStatic();
+    const here = stations.find((s) => s.id === stationId);
+    const list = (await nearBusStations(stationId)).map((n) => ({ ...n }));
+    // Two at a time: the free router refuses a burst of requests from one place
+    const queue = list.filter((n) => !(Date.now() - (walkFailedAt.get(n.id) ?? 0) < 10 * 60 * 1000));
+    await Promise.all([0, 1].map(async () => {
+        for (let n = queue.shift(); n; n = queue.shift()) {
             try {
+                // Along real streets; the router doesn't know stairs, so the 90 s off the platform stay
                 const r = await walkRoute(here, n, { distanceM });
-                if (r) { n.walkSecs = streetWalkSecs(r.secs); n.streets = true; }
-            } catch { /* router down: keep the estimate */ }
-        }));
-        // Nothing reached the router: try again next time instead of keeping estimates for good
-        if (!list.some((n) => n.streets)) setTimeout(() => streetWalkCache.delete(stationId), 10 * 60 * 1000).unref();
-        return list;
-    })());
-    return streetWalkCache.get(stationId);
+                if (r) { n.walkSecs = streetWalkSecs(r.secs); n.streets = true; } else walkFailedAt.set(n.id, Date.now());
+            } catch (err) {
+                walkFailedAt.set(n.id, Date.now());
+                console.error('Walk to bus stop:', err.message);
+            }
+        }
+    }));
+    return list;
 }
 async function nearBusStations(stationId) {
     if (nearBusCache.has(stationId)) return nearBusCache.get(stationId);
@@ -217,21 +220,29 @@ async function nearBusStations(stationId) {
             if (!s.modes.split(',').includes('bus') || s.lat === null) continue;
             const m = distanceM(here.lat, here.lng, s.lat, s.lng);
             if (m > NEAR_BUS_M) continue;
-            out.push({ id: s.id, name: s.name, lat: s.lat, lng: s.lng, walkSecs: KNOWN_WALKS[s.id] ?? walkSecsFor(m), streets: false });
+            out.push({ id: s.id, name: s.name, lat: s.lat, lng: s.lng, walkSecs: walkSecsFor(m), streets: false });
         }
     }
     nearBusCache.set(stationId, out);
     return out;
 }
 
-// Griffith Nathan: the stations around the campus (the same 800 m the planner uses for the landmark)
-let nathanIds = null;
-async function nathanStations() {
-    if (nathanIds) return nathanIds;
+// Where you're going after the bus (optional, any station, stop or place you pick): the stations
+// around it. A place like a campus covers 800 m (like the planner); a station or stop, 300 m
+// (the other platforms and stops of the same interchange).
+async function stationsAround(placeId) {
     const { stations } = await getStatic();
-    const anchor = stations.find((s) => s.id === 'place_grunbs');
-    nathanIds = anchor ? stations.filter((s) => s.lat !== null && distanceM(anchor.lat, anchor.lng, s.lat, s.lng) <= 800).map((s) => s.id) : [];
-    return nathanIds;
+    const id = String(placeId ?? '');
+    let centre = null;
+    let radius = 300;
+    if (id.startsWith(LANDMARK_PREFIX)) {
+        const l = LANDMARKS.find((x) => LANDMARK_PREFIX + x.id === id);
+        centre = l && stations.find((s) => s.id === l.anchor);
+        radius = 800;
+    } else centre = stations.find((s) => s.id === id);
+    if (!centre || centre.lat === null) return null;
+    const name = id.startsWith(LANDMARK_PREFIX) ? LANDMARKS.find((x) => LANDMARK_PREFIX + x.id === id).name : centre.name;
+    return { name, ids: stations.filter((s) => s.lat !== null && distanceM(centre.lat, centre.lng, s.lat, s.lng) <= radius).map((s) => s.id) };
 }
 
 // Where on this train you could change to a bus: GET /api/connection/places?trip=…
@@ -254,7 +265,8 @@ function planTime(date, secs) {
 }
 
 // Every bus leaving near this station after the train gets there:
-// GET /api/connection?trip=…&at=<station id>. Each with Make it / Tight / Miss for its own walk.
+// GET /api/connection?trip=…&at=<station id>[&to=<station, stop or place id>]. Each with Make it / Tight /
+// Miss for its own walk; with to=, only buses that go there, with when they get there.
 app.get('/api/connection', handle(async (req, res) => {
     const tripId = String(req.query.trip ?? '');
     const stationId = String(req.query.at ?? '');
@@ -265,7 +277,9 @@ app.get('/api/connection', handle(async (req, res) => {
     const near = await nearBusWalks(stationId);
     if (near.length === 0) return res.status(400).json({ error: `No bus stops within a short walk of ${at.name}` });
 
-    const [main, bus, now, nathan] = await Promise.all([getTripUpdates(), getBusTripUpdates().catch(() => null), nowSec(), nathanStations()]);
+    const [main, bus, now, dest] = await Promise.all([getTripUpdates(), getBusTripUpdates().catch(() => null), nowSec(), req.query.to ? stationsAround(req.query.to) : null]);
+    if (req.query.to && !dest) return res.status(400).json({ error: 'Can’t find where you’re going. Pick it from the list.' });
+    const target = dest?.ids ?? [];
     const trainDelay = delayAtStop(main.data.get(tripId), at.stop_sequence).delay;
     const train = { arrivalSecs: at.arrival_secs, delaySecs: trainDelay ?? 0 };
     const arrive = train.arrivalSecs + train.delaySecs;
@@ -283,7 +297,7 @@ app.get('/api/connection', handle(async (req, res) => {
             delaySecs: bus ? delayAtStop(bus.data.get(r.trip_id), r.stop_sequence).delay ?? 0 : 0,
             live: Boolean(bus?.data.get(r.trip_id)),
             walkSecs: st?.walkSecs ?? walkSecsFor(NEAR_BUS_M),
-            streets: st ? st.streets || st.id in KNOWN_WALKS : false,
+            streets: st ? st.streets : false,
             stopName: st?.name ?? '',
             platform: r.platform,
             sequence: r.stop_sequence,
@@ -299,19 +313,20 @@ app.get('/api/connection', handle(async (req, res) => {
     const missed = list.slice(0, firstOk).filter((b) => b.status === 'miss').slice(-2);
     const shown = [...missed, ...ok].slice(0, 40);
 
-    // When each one gets to Griffith Nathan, if it goes there
-    const calls = await db.getCallsAt([...new Set(shown.map((b) => b.tripId))], [...nathan, ...near.map((n) => n.id)]);
-    const nathanSet = new Set(nathan);
-    const toNathan = (b) => {
+    // When each bus gets to where you're going (if you said), and only if it goes there
+    const calls = await db.getCallsAt([...new Set(shown.map((b) => b.tripId))], [...target, ...near.map((n) => n.id)]);
+    const targetSet = new Set(target);
+    const arrivesAt = (b) => {
         const mine = calls.filter((c) => c.trip_id === b.tripId);
         const board = mine.find((c) => c.stop_sequence === b.sequence);
-        const there = mine.filter((c) => nathanSet.has(c.station_id) && c.stop_sequence > b.sequence)
+        const there = mine.filter((c) => targetSet.has(c.station_id) && c.stop_sequence > b.sequence)
             .sort((x, y) => x.arrival_secs - y.arrival_secs)[0];
-        return board && there ? b.leavesSecs + (there.arrival_secs - board.departure_secs) : null;
+        return board && there ? { secs: b.leavesSecs + (there.arrival_secs - board.departure_secs), sequence: there.stop_sequence } : null;
     };
 
     res.json({
         station: at.name.replace(/ station$/, ''),
+        to: dest ? dest.name : null,
         train: {
             tripId,
             arrives: formatSecs(arrive),
@@ -319,8 +334,7 @@ app.get('/api/connection', handle(async (req, res) => {
             delaySecs: trainDelay,
             platform: at.platform,
         },
-        buses: shown.map((b) => {
-            const n = toNathan(b);
+        buses: shown.map((b) => ({ b, n: target.length ? arrivesAt(b) : null })).filter(({ n }) => !target.length || n !== null).map(({ b, n }) => {
             return {
                 tripId: b.tripId,
                 route: b.route,
@@ -336,7 +350,8 @@ app.get('/api/connection', handle(async (req, res) => {
                 live: b.live,
                 spareMins: Math.round(b.spareSecs / 60),
                 status: b.status,
-                nathan: n === null ? null : formatSecs(n),
+                arrives: n === null ? null : formatSecs(n.secs),
+                offSequence: n === null ? null : n.sequence,
                 walkOnStreets: b.streets,
                 // For "Plan this trip": leave the platform in time for this bus (Brisbane date and time)
                 planAt: planTime(date, b.leavesSecs - b.walkSecs),

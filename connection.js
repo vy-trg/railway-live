@@ -35,8 +35,6 @@ export function walkSecsFor(distanceM) {
 export function streetWalkSecs(routeSecs) {
   return Math.ceil((90 + routeSecs) / 60) * 60;
 }
-// Vy timed these two herself (docs/connections.md); they beat the estimate
-export const KNOWN_WALKS = { '5341': 3 * 60, place_rompl: 4 * 60 };
 
 // Every bus leaving the stops near the station, each with its own walk, newest rules:
 // buses: [{ tripId, departSecs, delaySecs, walkSecs, ... }]. A bus that calls at two nearby stops

@@ -481,7 +481,7 @@ function drawJourney(j) {
 // Tap a bus for its stops and live delay; "Follow this bus" keeps it at the top and re-checks it
 // every 30 seconds (with the trip). From GET /api/connection/places and /api/connection.
 const STATUS = { make: 'Make it', tight: 'Tight', miss: 'Miss' };
-const connect = { trip: null, places: [], at: '', filter: 'all', q: '', data: null, open: null, more: false, follow: null };
+const connect = { trip: null, places: [], at: '', to: null, q: '', data: null, open: null, more: false, follow: null, allStops: false };
 const FOLLOW_KEY = 'rl-follow-bus';
 try { connect.follow = JSON.parse(localStorage.getItem(FOLLOW_KEY) || 'null'); } catch { connect.follow = null; }
 const saveFollow = () => { try { localStorage.setItem(FOLLOW_KEY, JSON.stringify(connect.follow)); } catch { /* private mode */ } };
@@ -521,8 +521,9 @@ async function loadConnect() {
     const tripId = connect.trip;
     const at = connect.at;
     try {
-        const c = await getJson(`/api/connection?trip=${encodeURIComponent(tripId)}&at=${encodeURIComponent(at)}`);
-        if (tripId !== connect.trip || at !== connect.at) return;
+        const to = connect.to;
+        const c = await getJson(`/api/connection?trip=${encodeURIComponent(tripId)}&at=${encodeURIComponent(at)}${to ? `&to=${encodeURIComponent(to.id)}` : ''}`);
+        if (tripId !== connect.trip || at !== connect.at || to !== connect.to) return;
         connect.data = c;
         renderConnect();
     } catch (err) {
@@ -541,7 +542,7 @@ function busRow(b) {
         <span class="when">${escapeHtml(b.leaves)}${late ? `<s>${escapeHtml(b.scheduled)}</s>` : ''}</span>
         <span class="what"><span class="route" style="background:${escapeHtml(b.color)};color:${escapeHtml(b.textColor)}">${escapeHtml(b.route)}</span><span>${escapeHtml(b.headsign)}</span></span>
         <span class="badge ${escapeHtml(b.status)}">${STATUS[b.status]}</span>
-        <span class="where">${stand} · ${b.walkOnStreets ? '' : '~'}${minsText(b.walkMins)} walk · ${spare}${b.nathan ? ` · Griffith Nathan ${escapeHtml(b.nathan)}` : ''}</span>
+        <span class="where">${stand} · ${b.walkOnStreets ? '' : '~'}${minsText(b.walkMins)} walk · ${spare}${b.arrives ? ` · gets to ${escapeHtml(connect.data?.to ?? '')} ${escapeHtml(b.arrives)}` : ''}</span>
     </button>`;
 }
 
@@ -550,8 +551,8 @@ function renderConnect() {
     if (!c) return;
     const trainLate = c.train.delaySecs !== null && c.train.delaySecs >= 60;
     const q = connect.q.trim().toLowerCase();
-    let list = c.buses.filter((b) => connect.filter !== 'nathan' || b.nathan);
-    if (q) list = list.filter((b) => b.route.toLowerCase() === q || `${b.route} ${b.headsign}`.toLowerCase().includes(q));
+    let list = c.buses;
+    if (q) list = list.filter((b) => b.route.toLowerCase() === q || b.route.toLowerCase().startsWith(q));
     // The bus you follow stays on top, even when a filter would hide it
     const followed = connect.follow?.train === connect.trip && connect.follow.at === connect.at
         ? c.buses.find((b) => b.tripId === connect.follow.bus) : null;
@@ -560,10 +561,28 @@ function renderConnect() {
     $('connect-out').innerHTML = `<p class="follow-note">Train at ${escapeHtml(c.station)} ${escapeHtml(c.train.arrives)}${trainLate ? ` (${Math.round(c.train.delaySecs / 60)} min late)` : ''}${c.train.platform ? `, platform ${escapeHtml(c.train.platform)}` : ''}. ${c.busLive ? 'Live bus delays where TransLink has them.' : 'Bus times are the timetable right now.'}</p>`
         + (connect.follow?.train === connect.trip && connect.follow.at === connect.at && !followed ? '<p class="field-error">The bus you followed has left or isn’t running.</p>' : '')
         + (followed?.status === 'miss' ? `<p class="field-error">The bus you follow now leaves before you get there.${(() => { const n = c.buses.find((b) => b.status !== 'miss' && b.route === followed.route); return n ? ` Next ${escapeHtml(n.route)}: ${escapeHtml(n.leaves)}.` : ''; })()}</p>` : '')
-        + (list.length === 0 ? `<p class="muted">${connect.filter === 'nathan' ? 'No bus from here goes to Griffith Nathan in the next 40 minutes.' : 'No buses match.'}</p>` : '');
+        + (list.length === 0 ? `<p class="muted">${c.to && !q ? `No bus from here goes to ${escapeHtml(c.to)} in the next 40 minutes. Try Plan this trip for routes with a change.` : 'No buses match.'}</p>` : '');
     $('connect-list').innerHTML = list.slice(0, limit).map((b) => `<li class="${b === followed ? 'followed' : ''}">${busRow(b)}${connect.open === b.tripId ? '<div class="bus-detail" data-detail><p class="muted">Loading stops…</p></div>' : ''}</li>`).join('');
     $('connect-more').hidden = list.length <= limit;
     if (connect.open && list.slice(0, limit).some((b) => b.tripId === connect.open)) loadBusDetail(c.buses.find((b) => b.tripId === connect.open));
+}
+
+// The bus's stops from where you get on: a line with a dot per stop, times lined up on the right.
+// Long trips show the first 6 and the last; "Show all stops" opens the rest.
+function stopList(stops, b) {
+    const toName = connect.data?.to;
+    const dest = (s) => b.offSequence !== null && s.sequence === b.offSequence;
+    const row = (s, i) => `<li class="${i === 0 ? 'geton' : ''}${dest(s) ? ' dest' : ''}"><span class="n">${escapeHtml(s.name)}${i === 0 ? ' <em>get on</em>' : dest(s) && toName ? ' <em>get off</em>' : ''}</span><span class="t">${escapeHtml((s.expected ?? s.scheduled).replace(' ', '\u00a0'))}</span></li>`;
+    // Folded: the first 6, where you get off, and the last stop; a "Show all" link stands in for each gap
+    const keep = new Set([0, 1, 2, 3, 4, 5, stops.length - 1, stops.findIndex(dest)]);
+    const folded = !connect.allStops && stops.length > 8;
+    const gap = `<li class="gap"><button type="button" class="link-btn" data-allstops>Show all ${stops.length} stops</button></li>`;
+    const shown = [];
+    stops.forEach((s, i) => {
+        if (!folded || keep.has(i)) shown.push(row(s, i));
+        else if (keep.has(i - 1)) shown.push(gap);
+    });
+    return `<ol class="bus-stops" style="--c:${escapeHtml(b.color)}">${shown.join('')}</ol>`;
 }
 
 // One bus: its live delay, where it stands, every stop from here on with times, and Follow
@@ -585,20 +604,19 @@ async function loadBusDetail(b) {
                 <button type="button" class="follow-btn" data-plan="${escapeHtml(b.tripId)}">Plan this trip</button>
             </div>
             ${on ? '<p class="follow-note">It stays at the top and is re-checked every 30 seconds while this train is open.</p>' : ''}
-            <ol>${stops.map((s) => `<li class="${b.nathan && /griffith university|nathan/i.test(s.name) ? 'nathan' : ''}"><span>${escapeHtml(s.name)}</span><span>${escapeHtml(s.expected ?? s.scheduled)}</span></li>`).join('')}</ol>`;
+            ${stopList(stops, b)}`;
     } catch {
         box.innerHTML = '<p class="field-error">Can’t load this bus’s stops right now.</p>';
     }
 }
 
 // "Plan this trip": the Plan tab, from the station you change at, leaving in time for this bus,
-// to Griffith Nathan if the bus goes there (otherwise to where the bus ends). The planner walks along
+// to where you said you're going (otherwise to where the bus ends). The planner walks along
 // real streets and may find something better than this bus; that's the point of checking.
-const NATHAN = { id: 'landmark:griffith-nathan', name: 'Griffith University – Nathan campus' };
 function planFromBus(b) {
     if (!b || !connect.data) return;
     const end = connect.lastStop;
-    const to = b.nathan ? NATHAN : end?.stationId ? { id: end.stationId, name: end.name } : null;
+    const to = connect.to ?? (end?.stationId ? { id: end.stationId, name: end.name } : null);
     if (!to) return;
     const from = { id: connect.at, name: connect.data.station };
     // The planner reads the boxes, so the names must be ones it can find
@@ -624,13 +642,26 @@ $('connect-at').addEventListener('change', (e) => {
     $('connect-out').innerHTML = connect.at ? '<p class="muted">Checking buses…</p>' : '';
     if (connect.at) loadConnect();
 });
-$('connect-seg').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-f]');
-    if (!b) return;
-    connect.filter = b.dataset.f;
-    for (const x of $('connect-seg').querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b));
-    renderConnect();
+// Going to: any station, stop or place (optional). Only buses that go there are shown, with when they get there.
+stationSearchBox('connect-to', 'connect-to-list');
+function setConnectTo(to) {
+    connect.to = to;
+    $('connect-to-clear').hidden = !to;
+    $('connect-out').innerHTML = '<p class="muted">Checking buses…</p>';
+    $('connect-list').innerHTML = '';
+    if (connect.at) loadConnect();
+}
+$('connect-to').addEventListener('change', (e) => {
+    // Leaving the box fires change again: nothing to do if it's the same place
+    if (e.target.value.trim() === (connect.to?.name ?? '')) return;
+    const f = findStation(e.target.value);
+    if (!e.target.value.trim()) return setConnectTo(null);
+    if (f.several) { $('connect-out').innerHTML = `<p class="field-error">More than one place matches: ${escapeHtml(f.several.join(', '))}. Pick one from the list.</p>`; return; }
+    if (!f.match) { $('connect-out').innerHTML = '<p class="field-error">Can’t find that place. Start typing and pick it from the list.</p>'; return; }
+    e.target.value = f.match.name;
+    setConnectTo({ id: f.match.id, name: f.match.name });
 });
+$('connect-to-clear').addEventListener('click', () => { $('connect-to').value = ''; setConnectTo(null); });
 $('connect-q').addEventListener('input', (e) => { connect.q = e.target.value; renderConnect(); });
 $('connect-more').addEventListener('click', () => { connect.more = true; renderConnect(); });
 $('connect-list').addEventListener('click', (e) => {
@@ -642,11 +673,13 @@ $('connect-list').addEventListener('click', (e) => {
         renderConnect();
         return;
     }
+    if (e.target.closest('[data-allstops]')) { connect.allStops = true; renderConnect(); return; }
     const planBtn = e.target.closest('[data-plan]');
     if (planBtn) { planFromBus(connect.data.buses.find((b) => b.tripId === planBtn.dataset.plan)); return; }
     const row = e.target.closest('[data-bus]');
     if (!row) return;
     connect.open = connect.open === row.dataset.bus ? null : row.dataset.bus;
+    connect.allStops = false;
     renderConnect();
 });
 

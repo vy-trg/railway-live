@@ -71,12 +71,14 @@
                             <select id="connect-at"><option value="">Pick a station…</option></select>
                         </label>
                         <div id="connect-tools" class="connect-tools" hidden>
-                            <div class="seg" id="connect-seg" role="group" aria-label="Which buses">
-                                <button type="button" data-f="all" aria-pressed="true">All buses</button>
-                                <button type="button" data-f="nathan" aria-pressed="false">To Griffith Nathan</button>
+                            <div class="connect-to">
+                                <label class="visually-hidden" for="connect-to">Going to (optional)</label>
+                                <input id="connect-to" list="connect-to-list" placeholder="Going to? (optional) a stop, station or place" autocomplete="off">
+                                <datalist id="connect-to-list"></datalist>
+                                <button id="connect-to-clear" type="button" class="link-btn" hidden>Clear</button>
                             </div>
-                            <label class="visually-hidden" for="connect-q">Bus number or where it goes</label>
-                            <input id="connect-q" type="search" placeholder="Bus number or where to, e.g. 598" autocomplete="off">
+                            <label class="visually-hidden" for="connect-q">Bus number</label>
+                            <input id="connect-q" type="search" placeholder="Bus number, e.g. 598" autocomplete="off">
                         </div>
                         <div id="connect-out" aria-live="polite"></div>
                         <ul id="connect-list" class="bus-list"></ul>

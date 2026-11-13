@@ -100,18 +100,18 @@ Fix found while building it: Roma Street's M1 platform (10792) belongs to the bu
 
 Vy's question: Roma Street busway has dozens of routes going past; why only ask about the M1? Changed to:
 
-- **Any station** on the train with a bus stop within **450 m** can be picked ("Change at"). The walk to each stop is estimated: 90 s to get off the platform, plus about a second a metre (straight line stretched by a quarter, walked at 4.5 km/h), rounded up to whole minutes. Vy's own timings still win for Sherwood stop 5341 (3 min) and Roma Street busway (4 min).
+- **Any station** on the train with a bus stop within **450 m** can be picked ("Change at"). The walk to each stop is estimated: 90 s to get off the platform, plus about a second a metre (straight line stretched by a quarter, walked at 4.5 km/h), rounded up to whole minutes.
 - **Every bus** leaving those stops from 5 minutes before the train gets in to 40 minutes after, each marked Make it / Tight / Miss **for the walk to its own stop**. A bus calling at two nearby stops is shown once, at the stop where you can catch it. Only the last two misses before the first catchable bus are shown.
-- **Filter**: All buses / To Griffith Nathan (buses that call within 800 m of Griffith University bus station later on, with the time they get there), and a box for a route number or destination.
+- **Going to** (optional): any station, stop or place (campus, airport) from the search list. Only buses that go there are shown, each with when it gets there; the stop is marked *get off* in its stops. Nothing here is specific to one person's trip. Plus a box for a bus number.
 - **Tap a bus**: live delay (or "timetable time"), where it leaves from, the walk, and every stop from there on with times.
 - **Follow this bus**: it stays at the top of the list and is re-checked every 30 seconds with the train. If the train (or the bus) changes so it becomes a miss, a warning says so and gives the next bus on the same route. Remembered in this browser only.
 
 API:
 - `GET /api/connection/places?trip=<train trip id>`: stations on the trip with a bus stop nearby.
-- `GET /api/connection?trip=<train trip id>&at=<station id>`: `{ station, train: { arrives, scheduled, delaySecs, platform }, buses: [{ tripId, route, headsign, stop, platform, walkMins, scheduled, leaves, delaySecs, live, spareMins, status, nathan }], busLive }`. Replaces `via=sherwood|roma`.
+- `GET /api/connection?trip=<train trip id>&at=<station id>[&to=<station, stop or landmark id>]`: `{ station, to, train: { arrives, scheduled, delaySecs, platform }, buses: [{ tripId, route, headsign, stop, platform, walkMins, scheduled, leaves, delaySecs, live, spareMins, status, arrives, offSequence, walkOnStreets, planAt }], busLive }`. Replaces `via=sherwood|roma`.
 
-Walks (updated the same day): measured along real streets by the walking router (OSRM, OpenStreetMap), plus 90 s to get off the platform, since the router doesn't know stairs or how long the lights take. A stop it can't route to keeps the straight-line estimate and shows "~" in front of the walk.
+Walks (updated the same day): measured along real streets for every station alike (no personal timings: the app is for everyone) by the walking router (OSRM, OpenStreetMap), plus 90 s to get off the platform, since the router doesn't know stairs or how long the lights take. A stop it can't route to keeps the straight-line estimate and shows "~" in front of the walk.
 
-**Plan this trip** (in a bus's details): opens the Plan tab from the change station, leaving in time for that bus, to Griffith Nathan if the bus goes there (otherwise where it ends). The planner may find something better than that bus.
+**Plan this trip** (in a bus's details): opens the Plan tab from the change station, leaving in time for that bus, to where you said you're going (otherwise where the bus ends). The planner may find something better than that bus.
 
 Bus delays: checked against TransLink's live bus feed on 13 Nov, 9:35 am: 1,754 trips in the feed, 930 of them not started yet, and 827 of those already had a predicted delay of a minute or more (the delay carried over from the bus's previous trip). So buses do get delays before they start; a bus with no prediction at all shows its timetable time.
