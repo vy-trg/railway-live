@@ -639,14 +639,22 @@ app.get('/api/shapes', handle(async (req, res) => {
 }));
 
 // Push notifications for Start journey (push.js). Only when the VAPID keys are set (.env / Render).
-const pushReady = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
-if (pushReady) webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'https://github.com/vy-trg/railway-live', process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+// A key pasted wrongly turns push off with a message; it never stops the rest of the app starting.
+let pushReady = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+if (pushReady) {
+    try {
+        webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'https://github.com/vy-trg/railway-live', process.env.VAPID_PUBLIC_KEY.trim(), process.env.VAPID_PRIVATE_KEY.trim());
+    } catch (err) {
+        pushReady = false;
+        console.error(`Push alerts are off: ${err.message} Check VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY (see .env.example).`);
+    }
+}
 const pushJourneys = new Map(); // id -> { subscription, rides, walkMinsBefore, sent: Set, until }
 const MAX_PUSH_JOURNEYS = 500;
 
 app.get('/api/push/key', (req, res) => {
     if (!pushReady) return res.status(404).json({ error: 'Push notifications aren’t set up on this server' });
-    res.json({ key: process.env.VAPID_PUBLIC_KEY });
+    res.json({ key: process.env.VAPID_PUBLIC_KEY.trim() });
 });
 app.post('/api/push/journey', express.json({ limit: '8kb' }), (req, res) => {
     if (!pushReady) return res.status(404).json({ error: 'Push notifications aren’t set up on this server' });
