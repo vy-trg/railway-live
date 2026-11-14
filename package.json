@@ -21,7 +21,8 @@
     "express-rate-limit": "^8.7.3",
     "gtfs-realtime-bindings": "^2.2.0",
     "helmet": "^8.3.0",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "web-push": "^3.6.7"
   },
   "engines": {
     "node": ">=22"
