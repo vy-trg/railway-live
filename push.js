@@ -5,6 +5,9 @@
 // Kept in memory: a journey lasts an hour or two, and a restart (a deploy) only means the page
 // sends it again the next time it's open. One journey per subscription.
 
+// "Now": the vehicle is this many seconds or less from the stop
+export const NOW_SECS = 30;
+
 // The moments to tell someone about, from where each ride is now.
 // rides: [{ tripId, mode, line, headsign, fromName, fromPlatform, toName, fromSeq, toSeq, depart }]
 // progress: Map(tripId -> stops from buildTripProgress: [{ sequence, state, etaSec }]) (missing = unknown)
@@ -24,6 +27,14 @@ export function journeyMoments(rides, progress, walkMinsBefore = []) {
         key: `board-${r.tripId}`,
         text: `Your ${r.line} to ${r.headsign} leaves ${r.fromName}${r.fromPlatform ? ` from platform ${r.fromPlatform}` : ''} in ${leavesIn <= 0 ? 'under a minute' : `${leavesIn} min${leavesIn === 1 ? '' : 's'}`}.`,
       });
+    }
+    // Arriving now (half a minute or less away): a second nudge, on top of the one 2 minutes before.
+    // Checked every 15 seconds, so it always comes at least 15 seconds before the vehicle gets there.
+    if (!boarded && board && board.etaSec <= NOW_SECS && board.etaSec >= -NOW_SECS) {
+      out.push({ key: `board-now-${r.tripId}`, text: `Your ${r.line} to ${r.headsign} is arriving at ${r.fromName} now. Get ready to get on.` });
+    }
+    if (boarded && !arrived && off && off.etaSec <= NOW_SECS && off.etaSec >= -NOW_SECS) {
+      out.push({ key: `off-now-${r.tripId}`, text: `Get off now: ${r.toName}.` });
     }
     const nextIdx = stops.findIndex((s) => s.state === 'next');
     const offIdx = stops.findIndex((s) => s.sequence === r.toSeq);

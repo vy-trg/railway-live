@@ -5,10 +5,11 @@ import { journeyMoments, journeyOver, cleanJourney } from '../push.js';
 const bus = { tripId: 'B', mode: 'bus', line: 'bus 468', headsign: 'Oxley', fromName: 'Station Rd', fromPlatform: '', toName: 'Indooroopilly Shopping Centre', fromSeq: 3, toSeq: 7, depart: '3:42 pm' };
 const train = { tripId: 'T', mode: 'train', line: 'Springfield line', headsign: 'Caboolture', fromName: 'Springfield', fromPlatform: '2', toName: 'Indooroopilly', fromSeq: 1, toSeq: 9, depart: '3:12 pm' };
 // stops 1..10; the vehicle is at index `at` (next), eta 90 s per stop from there
-const stopsAt = (at, n = 10) => Array.from({ length: n }, (_, i) => ({ sequence: i + 1, state: i < at ? 'passed' : i === at ? 'next' : 'upcoming', etaSec: (i - at) * 90 }));
+// (the next stop is 90 s away, so "arriving now" isn't due unless a test says so)
+const stopsAt = (at, n = 10) => Array.from({ length: n }, (_, i) => ({ sequence: i + 1, state: i < at ? 'passed' : i === at ? 'next' : 'upcoming', etaSec: (i - at + 1) * 90 }));
 
 test('2 minutes before it leaves: get on, with the platform', () => {
-  const m = journeyMoments([train], new Map([['T', stopsAt(0).map((s) => ({ ...s, etaSec: s.etaSec + 100 }))]]));
+  const m = journeyMoments([train], new Map([['T', stopsAt(0).map((s) => ({ ...s, etaSec: s.etaSec + 10 }))]]));
   assert.deepEqual(m, [{ key: 'board-T', text: 'Your Springfield line to Caboolture leaves Springfield from platform 2 in 2 mins.' }]);
 });
 
@@ -38,4 +39,14 @@ test('what the page sends is checked', () => {
   const c = cleanJourney({ subscription: sub, rides: [{ ...train, mode: 'rocket', headsign: 'x'.repeat(500) }] });
   assert.equal(c.rides[0].mode, 'train');
   assert.equal(c.rides[0].headsign.length, 80);
+});
+
+test('arriving now: a second nudge to get on and to get off (on top of the earlier ones)', () => {
+  const nearBoard = stopsAt(0).map((s) => ({ ...s, etaSec: s.sequence === 1 ? 20 : s.etaSec + 20 }));
+  const keys = journeyMoments([train], new Map([['T', nearBoard]])).map((m) => m.key);
+  assert.deepEqual(keys.sort(), ['board-T', 'board-now-T']);
+  const nearOff = stopsAt(8).map((s) => ({ ...s, etaSec: s.sequence === 9 ? 25 : s.etaSec }));
+  const off = journeyMoments([train], new Map([['T', nearOff]]));
+  assert.ok(off.some((m) => m.key === 'off-now-T' && m.text === 'Get off now: Indooroopilly.'));
+  assert.ok(off.some((m) => m.key === 'off-T-1'), 'the "next stop" one is still there');
 });

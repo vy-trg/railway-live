@@ -2036,6 +2036,13 @@ async function tickJourney() {
         if (!boarded && leavesIn !== null && leavesIn <= 2 && leavesIn >= -1) {
             alertOnce(`board-${l.tripId}`, `Your ${lineOf(l)} to ${l.headsign} leaves ${l.from?.name ?? ''}${l.from?.platform ? ` from platform ${l.from.platform}` : ''} in ${leavesIn <= 0 ? 'under a minute' : mins(leavesIn)}.`);
         }
+        // Arriving now: a second nudge at the stop, on top of the one 2 minutes / 1-2 stops before
+        if (!boarded && board && board.etaSec <= 30 && board.etaSec >= -30) {
+            alertOnce(`board-now-${l.tripId}`, `Your ${lineOf(l)} to ${l.headsign} is arriving at ${l.from?.name ?? 'the stop'} now. Get ready to get on.`);
+        }
+        if (boarded && !arrived && off && off.etaSec <= 30 && off.etaSec >= -30) {
+            alertOnce(`off-now-${l.tripId}`, `Get off now: ${l.to?.name ?? 'your stop'}.`);
+        }
         const soon = l.mode === 'bus' ? 2 : 1;
         if (boarded && !arrived && left !== null && left <= soon) {
             alertOnce(`off-${l.tripId}-${left}`, l.mode === 'bus'
@@ -2164,6 +2171,9 @@ function pushNote(text, journeyId = null) {
     let note = document.getElementById('go-push');
     if (!note) { note = document.createElement('div'); note.id = 'go-push'; note.className = 'go-push'; foot.before(note); }
     note.hidden = !text;
+    // The test button is for checking on your own computer (localhost), not something people need
+    const dev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if (!dev) journeyId = null;
     note.innerHTML = text ? `<p>${escapeHtml(text)}</p>${journeyId ? '<button type="button" class="link-btn" id="go-test">Send a test alert</button><p class="go-test-note" id="go-test-note" hidden></p>' : ''}` : '';
     if (!journeyId) return;
     $('go-test').onclick = async () => {

@@ -12,6 +12,7 @@ Open a planned journey and press **Start journey** (shown from 90 minutes before
   - 2 minutes before your service leaves: "Your train to Caboolture leaves Springfield from platform 2 in 2 mins."
   - Train, tram, ferry: "Next stop: get off at Indooroopilly."
   - Bus: 2 stops before ("press the bell after the next stop") and 1 stop before ("press the bell now"). SEQ buses only stop if someone asks.
+  - Arriving now (30 seconds or less away), on top of the ones above: "is arriving at … now. Get ready to get on." and "Get off now: …". Checked every 15 seconds, so it comes at least 15 seconds before.
   - About to miss a change because the one you're on is late: "You may miss the bus 468 at 3:42 pm", with **Find another way** (plans again from where you'll get off).
 - **Walking directions** for the walk you're on, in short sentences from the walking router (OpenStreetMap streets): "Head east on Station Rd for 80 m", "Turn left onto Coonan St".
 - **The screen stays on** while a journey is running (Wake Lock, where the browser has it).

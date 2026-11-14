@@ -684,7 +684,7 @@ app.delete('/api/push/journey/:id', (req, res) => {
     res.status(204).end();
 });
 
-// Every 30 seconds: where each followed ride is, and anything to tell its person
+// Every 15 seconds: where each followed ride is, and anything to tell its person
 async function tripProgress(tripId) {
     const [trips, stops] = await Promise.all([db.getTrips([tripId]), db.getTripStops(tripId)]);
     const trip = trips.get(tripId);
@@ -720,7 +720,7 @@ async function watchPushJourneys() {
         }
     }
 }
-if (pushReady && process.env.NODE_ENV !== 'test') setInterval(() => watchPushJourneys().catch((e) => console.error('Push watch:', e.message)), 30000).unref();
+if (pushReady && process.env.NODE_ENV !== 'test') setInterval(() => watchPushJourneys().catch((e) => console.error('Push watch:', e.message)), 15000).unref();
 
 // One train's journey: every stop with scheduled and expected times
 app.get('/api/trips/:tripId', handle(async (req, res) => {
