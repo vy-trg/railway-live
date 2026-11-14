@@ -166,6 +166,20 @@ export async function getDelayStats(toDate, days, onTimeSec) {
   return { byRoute: byRoute.rows, byHour: byHour.rows, byDay: byDay.rows, worst: worst.rows, since: since.rows[0].first };
 }
 
+// For "how often would I make my connection": per hour of the day (when the trip was due to start),
+// how many trips ran, and each trip's delay at the end of its run (cancelled = null). Optionally one line.
+export async function getDelaysByHour(toDate, days, routeIds = null) {
+  const { rows } = await pool.query(
+    `SELECT (start_secs / 3600) % 24 AS hour,
+            CASE WHEN cancelled THEN NULL ELSE final_delay END AS delay
+     FROM trip_delays
+     WHERE service_date BETWEEN $1::date - ($2::int - 1) AND $1::date
+       AND ($3::text[] IS NULL OR route_id = ANY($3::text[]))`,
+    [toDate, days, routeIds]
+  );
+  return rows;
+}
+
 // ---------- Journey planner ----------
 
 // Every stop with where it is (platforms use their station's position) and its station's name

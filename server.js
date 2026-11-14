@@ -5,7 +5,7 @@ import * as db from './db/queries.js';
 import { buildLines } from './lines.js';
 import { enrichTrains, nextStop, summarize, buildBoard, railAlerts, buildTripProgress } from './live.js';
 import { brisbaneClock, parseLocalTime, formatClock, delayAtStop } from './schedule.js';
-import { serviceDate, statsByLine, percent, ON_TIME_SEC } from './delays.js';
+import { serviceDate, statsByLine, percent, ON_TIME_SEC, connectionByHour } from './delays.js';
 import { plan, describeJourney, getNetwork } from './planner.js';
 import { resolveLandmarks, matchLandmarks, LANDMARK_PREFIX, LANDMARKS } from './landmarks.js';
 import { walkRoute, roadPath } from './walk.js';
@@ -567,6 +567,36 @@ app.get('/api/stats', handle(async (req, res) => {
         })),
     };
     statsCache.set(days, { at: Date.now(), body });
+    res.json(body);
+}));
+
+// Making a connection: if you leave N minutes between your train getting in and the next thing you
+// catch, how often would the train have been on time enough, by hour of the day? All lines, or one.
+// GET /api/stats/connections?days=7|30&spare=3|5|10[&line=<line name>]
+const connCache = new Map();
+app.get('/api/stats/connections', handle(async (req, res) => {
+    const days = Number(req.query.days ?? 30);
+    const spare = Number(req.query.spare ?? 5);
+    if (![1, 7, 30].includes(days)) return res.status(400).json({ error: 'days must be 1, 7 or 30' });
+    if (![3, 5, 10].includes(spare)) return res.status(400).json({ error: 'spare must be 3, 5 or 10 minutes' });
+    const { mainLines } = await getStatic();
+    const lineName = req.query.line ? String(req.query.line) : null;
+    const line = lineName ? mainLines.find((l) => l.name === lineName) : null;
+    if (lineName && !line) return res.status(400).json({ error: 'Unknown line' });
+    const key = `${days}|${spare}|${lineName ?? ''}`;
+    const cached = connCache.get(key);
+    if (cached && Date.now() - cached.at < 10 * 60_000) return res.json(cached.body);
+    const now = await nowSec();
+    const rows = await db.getDelaysByHour(serviceDate(now), days, line ? line.routeIds : null);
+    const body = {
+        days,
+        spare,
+        line: line ? { name: line.name, color: `#${line.color}` } : null,
+        lines: mainLines.filter((l) => l.mode === 'train').map((l) => l.name).sort(),
+        trips: rows.length,
+        byHour: connectionByHour(rows, spare * 60),
+    };
+    connCache.set(key, { at: Date.now(), body });
     res.json(body);
 }));
 

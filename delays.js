@@ -48,3 +48,22 @@ export function statsByLine(routeRows, lines) {
         .filter((l) => l.trips > 0)
         .sort((a, b) => b.onTimePercent - a.onTimePercent || a.name.localeCompare(b.name));
 }
+
+// How often a connection with this much spare time would have been made, hour by hour.
+// A train "makes it" when it arrived less late than the spare time you leave; a cancelled one doesn't.
+// rows: [{ hour, delay }] (delay in seconds, null = cancelled). Hours with fewer than minTrips are left
+// out: 3 trips at 1 am would give a misleading percentage.
+export function connectionByHour(rows, spareSecs, minTrips = 5) {
+    const byHour = new Map();
+    for (const r of rows) {
+        const h = Number(r.hour);
+        const o = byHour.get(h) ?? { hour: h, trips: 0, made: 0 };
+        o.trips += 1;
+        if (r.delay !== null && r.delay < spareSecs) o.made += 1;
+        byHour.set(h, o);
+    }
+    return [...byHour.values()]
+        .filter((o) => o.trips >= minTrips)
+        .sort((a, b) => a.hour - b.hour)
+        .map((o) => ({ hour: o.hour, trips: o.trips, madePercent: percent(o.made, o.trips) }));
+}

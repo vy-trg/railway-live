@@ -684,3 +684,7 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .leg.ride .off-t { font-weight: 800; }
 .leg.ride .d.end { position: relative; }
 .leg.ride .d.end::before { content: ""; position: absolute; left: -8px; top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--paper); border: 3px solid var(--c); box-sizing: border-box; }
+
+/* Stats: making a connection */
+.conn-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.conn-tools select { flex: 1; min-width: 10rem; }

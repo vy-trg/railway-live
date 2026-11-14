@@ -1780,6 +1780,17 @@ async function loadStats() {
           <p class="hint">When the trip was due to start</p>
           ${bars(s.byHour, (h) => hourLabel(h.hour))}
 
+          <h3 class="stats-h">Making a connection</h3>
+          <p class="hint">If you leave a few minutes between the train getting in and the bus (or train) you're catching, how often would the train have got you there in time? By the hour it was due to start.</p>
+          <div class="conn-tools">
+            <div class="seg" id="conn-spare" role="group" aria-label="Minutes you leave to change">
+              ${[3, 5, 10].map((m) => `<button type="button" data-spare="${m}" aria-pressed="${m === connSpare}">${m} min</button>`).join('')}
+            </div>
+            <label class="visually-hidden" for="conn-line">Line</label>
+            <select id="conn-line"><option value="">All train lines</option></select>
+          </div>
+          <div id="conn-stats" aria-live="polite"></div>
+
           ${s.byDay.length > 1 ? `<h3 class="stats-h">Day by day</h3>${bars(s.byDay, (d) => shortDate(d.date))}` : ''}
 
           <h3 class="stats-h">Often late</h3>
@@ -1787,11 +1798,50 @@ async function loadStats() {
             <li><span class="to" style="--c:${escapeHtml(w.color)}">${escapeHtml(w.time)} ${escapeHtml(w.origin)} to ${escapeHtml(w.headsign)}</span>
               <span class="quiet">about ${mins(w.avgLateMinutes)} late · ${w.runs} runs</span></li>`).join('')}</ol>`
             : '<p class="empty">Each departure needs at least 2 recorded runs before it shows here. Check back in a day or two.</p>'}`;
+        loadConnStats();
     } catch (err) {
         box.innerHTML = '<p class="empty">The numbers aren’t loading right now. Try again in a minute.</p>';
         console.error('Failed to load stats:', err);
     }
 }
+// Making a connection: spare minutes (3, 5, 10) and a line; bars per hour of the day
+let connSpare = 5;
+let connLine = '';
+async function loadConnStats() {
+    const box = $('conn-stats');
+    if (!box) return;
+    const want = `${statsDays}|${connSpare}|${connLine}`;
+    try {
+        const c = await getJson(`/api/stats/connections?days=${statsDays}&spare=${connSpare}${connLine ? `&line=${encodeURIComponent(connLine)}` : ''}`);
+        if (want !== `${statsDays}|${connSpare}|${connLine}`) return;
+        const sel = $('conn-line');
+        if (sel.options.length === 1) sel.insertAdjacentHTML('beforeend', c.lines.map((n) => `<option>${escapeHtml(n)}</option>`).join(''));
+        sel.value = connLine;
+        if (c.byHour.length === 0) {
+            box.innerHTML = '<p class="empty">Not enough trips recorded for this yet. Try a longer period or all lines.</p>';
+            return;
+        }
+        const best = c.byHour.reduce((a, b) => (b.madePercent > a.madePercent ? b : a));
+        const worst = c.byHour.reduce((a, b) => (b.madePercent < a.madePercent ? b : a));
+        box.innerHTML = `${bars(c.byHour.map((h) => ({ ...h, onTimePercent: h.madePercent })), (h) => hourLabel(h.hour))}
+          <p class="hint">With ${connSpare} minutes to change, ${escapeHtml(hourLabel(worst.hour))} trains were the least likely to get you there (${worst.madePercent}%), ${escapeHtml(hourLabel(best.hour))} the most (${best.madePercent}%). From ${c.trips.toLocaleString('en-AU')} trips; how late a train was at the end of its run stands in for how late it is where you change.</p>`;
+    } catch {
+        box.innerHTML = '<p class="empty">This isn’t loading right now. Try again in a minute.</p>';
+    }
+}
+$('stats').addEventListener('click', (e) => {
+    const b = e.target.closest('#conn-spare button[data-spare]');
+    if (!b) return;
+    connSpare = Number(b.dataset.spare);
+    for (const x of document.querySelectorAll('#conn-spare button')) x.setAttribute('aria-pressed', String(x === b));
+    loadConnStats();
+});
+$('stats').addEventListener('change', (e) => {
+    if (e.target.id !== 'conn-line') return;
+    connLine = e.target.value;
+    loadConnStats();
+});
+
 $('stats-seg').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-days]');
     if (!btn) return;
