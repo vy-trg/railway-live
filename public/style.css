@@ -714,3 +714,4 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 .go-steps li.now::after { width: 13px; height: 13px; left: 1px; top: 10px; background: var(--c); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 25%, transparent); }
 .go-steps span { color: var(--muted); font-size: 0.78rem; }
 .go-foot { margin: 0; font-size: 0.72rem; color: var(--muted); }
+.go-push { margin: 0; font-size: 0.78rem; color: var(--gum); font-weight: 700; }

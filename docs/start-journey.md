@@ -20,5 +20,6 @@ Open a planned journey and press **Start journey** (shown from 90 minutes before
 ## Limits
 
 - Station exits aren't published by TransLink, so it doesn't say which exit or which way to walk out of a station.
-- In the background (screen off, another app) a web page can't run reliably, so alerts there need push notifications: see PWA + Web Push.
+- In the background (screen off, another app) a web page can't run reliably, so the server follows the journey and sends the alerts as Web Push notifications (`push.js`, `public/sw.js`). That needs: notifications allowed; on iPhone, Add to Home Screen first (iOS 16.4+); the VAPID keys set on the server. The page says plainly which of these is missing.
+- The server keeps followed journeys in memory (an hour or two each): a deploy, or the free Render server sleeping after 15 minutes without visitors, stops push alerts until the page is opened again.
 - A bus with no live data is followed by its timetable.

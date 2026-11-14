@@ -15,7 +15,9 @@ Live trains, buses, trams and ferries for South East Queensland: where every ser
 
 I take the Springfield line to uni, then a bus to Griffith's Nathan campus. TransLink's app shows where my train is right now, but not how reliable each service usually is. A train that is regularly a few minutes late at a certain time decides whether I make the bus.
 
-Railway Live shows every train, tram and ferry live, and records how late each service runs every 10 minutes. The Stats tab shows which lines, times of day and departures are most often late, so I can pick a train I can rely on instead of guessing. Success means: after two weeks of data, I know which morning Springfield train is the most reliable. Connecting the train to the bus is the next project (weeks 8–9).
+Railway Live shows every train, tram and ferry live, and records how late each service runs every 10 minutes. The Stats tab shows which lines, times of day and departures are most often late, so I can pick a train I can rely on instead of guessing. Success means: after two weeks of data, I know which morning Springfield train is the most reliable.
+
+Then the harder question for anyone who changes from a train to a bus: **will I make the connection?** TransLink shows where each vehicle is, but not that. Railway Live now answers it for any station and any bus (or train) after it, and can walk you through the trip one step at a time.
 
 ---
 
@@ -42,6 +44,10 @@ Railway Live puts a thin server in between: it fetches and decodes the feed **at
 - **Network numbers** worked out from the live feed: trains running, share on time, average delay of late trains, and the route that is furthest behind right now.
 - **Rail alerts** from TransLink's Alerts feed (track closures, lift outages, timetable changes), with the lines they affect.
 - **Filter by line** (e.g. Springfield shows every train to or from Springfield). The line and station are kept in the URL, so a view can be shared.
+- **Catching a bus after this train?** On any train, pick the station you get off at: every bus leaving the stops nearby in the next 40 minutes, each *Make it* / *Tight* / *Miss* for the walk to its own stop (walks along real streets), with live bus delays. Filter by where you're going or a bus number; tap a bus for its stops; *Follow this bus* keeps checking it. ([docs/connections.md](docs/connections.md))
+- **How often would I make it?** Stats: for 3, 5 or 10 minutes to change, how often trains got people there in time, hour by hour, per line.
+- **Start journey:** on a planned journey, one instruction at a time ("Get on the train to Caboolture, platform 2", "2 stops to go"), worked out from where the vehicle is, not GPS. Alerts to get on, to get off (buses: 2 stops before, with *press the bell*), and when a late service will make you miss a change, with *Find another way*. Walking directions in short sentences; the screen stays on. ([docs/start-journey.md](docs/start-journey.md))
+- **Installable, with alerts when your phone is locked:** Add to Home Screen (web app manifest + service worker). During Start journey the server follows your trip and sends the alerts as Web Push notifications (free, VAPID). On iPhone this needs Add to Home Screen first (iOS 16.4+).
 - **Feed status:** shows how fresh the data is, and keeps the last known data (marked as old) if TransLink is down.
 
 ---
@@ -91,6 +97,9 @@ Browser  --every 30s-->  /api/trains, /api/summary, /api/departures  -->  30s ca
 ---
 
 ## Run it locally
+
+Push alerts are optional. To try them locally, make a key pair once (`npx web-push generate-vapid-keys`) and put it in `.env` as `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` (see `.env.example`); without them everything else works and alerts show while the page is open.
+
 
 **Needs:** Node.js 22 or newer and a PostgreSQL database (Neon, or Docker below). No API key is required.
 
@@ -189,9 +198,10 @@ compose.yaml       Runs the app in Docker locally
 ## Known limitations & next steps
 
 - The timetable has to be reloaded when TransLink publishes a new one (`npm run load-gtfs`); next step is a weekly GitHub Actions job.
-- "Most delayed" is right now only; logging delays every 15 minutes (`delay_log`) will show which lines are late most often.
 - The cache lives in memory, so it is empty after the free Render server restarts or wakes from sleep; the first request after that waits for TransLink.
-- Markers jump every 30 seconds rather than gliding between positions.
+- Push alerts are followed by the server in memory: a deploy or the free Render server sleeping (no visitors for 15 minutes) stops them until the page is opened again. The page itself keeps alerting while it's open.
+- Station exits aren't in TransLink's data, so Start journey can't say which exit to take.
+- Delays at the change station are estimated from how late a trip was at the end of its run (Stats) or from live predictions (planner, connections), which TransLink only gives shortly before and during a trip.
 
 ---
 

@@ -1920,8 +1920,9 @@ function startJourney(j, date) {
     $('go-alert').hidden = true;
     try { localStorage.setItem(GO_KEY, JSON.stringify({ j, date })); } catch { /* fine for this visit */ }
     // Asked here, when you press the button (browsers only allow asking after a tap)
-    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    // (and the push subscription needs it: startPush waits for the answer)
     keepAwake(true);
+    startPush(j);
     $('go').hidden = false;
     $('view-plan').scrollTo?.({ top: 0 });
     window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
@@ -1931,6 +1932,7 @@ function startJourney(j, date) {
 }
 
 function endJourney() {
+    stopPush();
     clearInterval(go.timer);
     go.j = null;
     keepAwake(false);
@@ -1985,7 +1987,10 @@ function alertOnce(key, text) {
             o.connect(g).connect(ctx.destination); o.start(ctx.currentTime + k * 0.2); o.stop(ctx.currentTime + k * 0.2 + 0.5);
         });
     } catch { /* no sound */ }
-    if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+    // The server sends this one itself when push is on (see startPush); no second copy from here
+    let pushing = false;
+    try { pushing = Boolean(localStorage.getItem(PUSH_KEY)); } catch { /* not kept */ }
+    if (!pushing && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
         navigator.serviceWorker?.ready.then((r) => r.showNotification('Railway Live', { body: text, tag: 'rl-go', renotify: true }))
             .catch(() => { try { new Notification('Railway Live', { body: text }); } catch { /* not allowed */ } });
     }
@@ -2126,3 +2131,78 @@ try {
         } else localStorage.removeItem(GO_KEY);
     }
 } catch { /* nothing kept */ }
+
+// ---------- PWA + Web Push for Start journey ----------
+// The service worker (sw.js) makes the site installable and shows the notifications the server
+// sends while you're on a journey and the page isn't on screen (push.js on the server).
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+const PUSH_KEY = 'rl-push-id';
+const b64ToBytes = (b64) => {
+    const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(s, (c) => c.charCodeAt(0));
+};
+const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const installed = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+// Why notifications won't come, in plain words (shown under the journey)
+function pushNote(text) {
+    const foot = $('go-foot');
+    if (!foot) return;
+    let note = document.getElementById('go-push');
+    if (!note) { note = document.createElement('p'); note.id = 'go-push'; note.className = 'go-push'; foot.before(note); }
+    note.textContent = text;
+    note.hidden = !text;
+}
+
+async function startPush(j) {
+    if (isIos && !installed) {
+        return pushNote('To get these alerts with your iPhone locked: Share, then Add to Home Screen (iOS 16.4 or later), open Railway Live from there and start the journey again. Until then, keep this page open.');
+    }
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        return pushNote('This browser can’t show alerts with the screen locked. Keep this page open and you’ll still get them here.');
+    }
+    const perm = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission;
+    if (perm !== 'granted') {
+        return pushNote('Notifications are off for this site, so alerts only show while this page is open. You can allow them in your browser’s site settings.');
+    }
+    try {
+        const { key } = await getJson('/api/push/key');
+        const reg = await navigator.serviceWorker.ready;
+        const sub = (await reg.pushManager.getSubscription()) ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+        const rides = j.legs.filter((l) => l.kind === 'ride');
+        const walkMinsBefore = rides.map((r) => {
+            const k = j.legs.indexOf(r);
+            let n = 0;
+            for (let x = k - 1; x >= 0 && j.legs[x].kind === 'walk'; x -= 1) n += j.legs[x].minutes ?? 0;
+            return n;
+        });
+        const res = await fetch('/api/push/journey', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                subscription: sub.toJSON(),
+                walkMinsBefore,
+                rides: rides.map((l) => ({
+                    tripId: l.tripId, mode: l.mode, line: lineOf(l), headsign: l.headsign,
+                    fromName: l.from?.name, fromPlatform: l.from?.platform ?? '', toName: l.to?.name,
+                    fromSeq: l.fromSeq, toSeq: l.toSeq, depart: l.depart,
+                })),
+            }),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const { id } = await res.json();
+        try { localStorage.setItem(PUSH_KEY, id); } catch { /* fine */ }
+        pushNote('Alerts will come even with your phone locked.');
+    } catch {
+        pushNote('Alerts with the screen locked aren’t available right now. Keep this page open and you’ll still get them here.');
+    }
+}
+
+function stopPush() {
+    let id = null;
+    try { id = localStorage.getItem(PUSH_KEY); localStorage.removeItem(PUSH_KEY); } catch { /* fine */ }
+    if (id) fetch(`/api/push/journey/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+    pushNote('');
+}

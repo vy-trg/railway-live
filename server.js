@@ -12,6 +12,9 @@ import { walkRoute, roadPath } from './walk.js';
 import { formatSecs, busesAfterTrain, walkSecsFor, streetWalkSecs, NEAR_BUS_M } from './connection.js';
 import { distanceM, EXTRA_CHANGE_SECS } from './raptor.js';
 import helmet from 'helmet';
+import webpush from 'web-push';
+import { randomUUID } from 'node:crypto';
+import { journeyMoments, journeyOver, cleanJourney } from './push.js';
 import { rateLimit } from 'express-rate-limit';
 
 const app = express();
@@ -634,6 +637,69 @@ app.get('/api/shapes', handle(async (req, res) => {
     }
     res.json(shapesCache.filter((s) => !busRoutes.has(s.routeId)));
 }));
+
+// Push notifications for Start journey (push.js). Only when the VAPID keys are set (.env / Render).
+const pushReady = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+if (pushReady) webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'https://github.com/vy-trg/railway-live', process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+const pushJourneys = new Map(); // id -> { subscription, rides, walkMinsBefore, sent: Set, until }
+const MAX_PUSH_JOURNEYS = 500;
+
+app.get('/api/push/key', (req, res) => {
+    if (!pushReady) return res.status(404).json({ error: 'Push notifications aren’t set up on this server' });
+    res.json({ key: process.env.VAPID_PUBLIC_KEY });
+});
+app.post('/api/push/journey', express.json({ limit: '8kb' }), (req, res) => {
+    if (!pushReady) return res.status(404).json({ error: 'Push notifications aren’t set up on this server' });
+    const j = cleanJourney(req.body);
+    if (!j) return res.status(400).json({ error: 'Send a push subscription and the journey’s rides' });
+    if (pushJourneys.size >= MAX_PUSH_JOURNEYS) return res.status(503).json({ error: 'Too many journeys being followed right now' });
+    // One journey per phone: starting another replaces it
+    for (const [id, old] of pushJourneys) if (old.subscription.endpoint === j.subscription.endpoint) pushJourneys.delete(id);
+    const id = randomUUID();
+    pushJourneys.set(id, { ...j, sent: new Set(), until: Date.now() + 4 * 3600 * 1000 });
+    res.status(201).json({ id });
+});
+app.delete('/api/push/journey/:id', (req, res) => {
+    pushJourneys.delete(req.params.id);
+    res.status(204).end();
+});
+
+// Every 30 seconds: where each followed ride is, and anything to tell its person
+async function tripProgress(tripId) {
+    const [trips, stops] = await Promise.all([db.getTrips([tripId]), db.getTripStops(tripId)]);
+    const trip = trips.get(tripId);
+    if (!trip || stops.length === 0) return null;
+    const empty = { data: new Map() };
+    const [updates, now] = await Promise.all([trip.mode === 'bus' ? getBusTripUpdates().catch(() => empty) : getTripUpdates().catch(() => empty), nowSec()]);
+    const clock = brisbaneClock(now);
+    let dayStart = now - clock.secs;
+    if (clock.secs < stops[0].departure_secs - 3600 * 4) dayStart -= 86400;
+    return buildTripProgress(stops, updates.data.get(tripId), now, dayStart);
+}
+async function watchPushJourneys() {
+    const tripIds = [...new Set([...pushJourneys.values()].flatMap((j) => j.rides.map((r) => r.tripId)))];
+    if (tripIds.length === 0) return;
+    const progress = new Map();
+    for (const id of tripIds) {
+        const p = await tripProgress(id).catch(() => null);
+        if (p) progress.set(id, p);
+    }
+    for (const [id, j] of pushJourneys) {
+        if (Date.now() > j.until || journeyOver(j.rides, progress)) { pushJourneys.delete(id); continue; }
+        for (const m of journeyMoments(j.rides, progress, j.walkMinsBefore)) {
+            if (j.sent.has(m.key)) continue;
+            j.sent.add(m.key);
+            try {
+                await webpush.sendNotification(j.subscription, JSON.stringify({ title: 'Railway Live', body: m.text, tag: m.key }), { TTL: 120, urgency: 'high' });
+            } catch (err) {
+                // 404 / 410: the phone unsubscribed or the browser dropped it; stop following
+                if (err.statusCode === 404 || err.statusCode === 410) pushJourneys.delete(id);
+                else console.error('Push failed:', err.statusCode ?? err.message);
+            }
+        }
+    }
+}
+if (pushReady && process.env.NODE_ENV !== 'test') setInterval(() => watchPushJourneys().catch((e) => console.error('Push watch:', e.message)), 30000).unref();
 
 // One train's journey: every stop with scheduled and expected times
 app.get('/api/trips/:tripId', handle(async (req, res) => {
