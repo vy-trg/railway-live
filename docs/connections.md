@@ -115,3 +115,9 @@ Walks (updated the same day): measured along real streets for every station alik
 **Plan this trip** (in a bus's details): opens the Plan tab from the change station, leaving in time for that bus, to where you said you're going (otherwise where the bus ends). The planner may find something better than that bus.
 
 Bus delays: checked against TransLink's live bus feed on 13 Nov, 9:35 am: 1,754 trips in the feed, 930 of them not started yet, and 827 of those already had a predicted delay of a minute or more (the delay carried over from the bus's previous trip). So buses do get delays before they start; a bus with no prediction at all shows its timetable time.
+
+## How often would I make it? (Stats tab, 14 Nov)
+
+"Making a connection" on the Stats tab: pick how many minutes you leave to change (3, 5 or 10) and a line (or all train lines). For each hour of the day, the share of trips that would have got you there in time: a trip counts when it ran less late than the minutes you left; a cancelled trip never does. Hours with fewer than 5 trips are left out. From `trip_delays` (recorded every 10 minutes since 31 Oct).
+
+Limit: `trip_delays` keeps how late a trip was at the **end of its run**, not at each station, so that stands in for how late it is where you change (said under the chart). For the stations in the middle of a line it can over-state the delay a little.

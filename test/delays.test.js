@@ -50,3 +50,21 @@ test('statsByLine adds up every route on a line and sorts best first', () => {
         { name: 'Springfield', color: '#6CC6E9', trips: 20, onTimePercent: 70, avgLateMinutes: 5 },
     ]);
 });
+
+// ---------- Making a connection, by hour ----------
+import { connectionByHour } from '../delays.js';
+
+test('a train makes it when it is less late than the spare time; cancelled never does', () => {
+  const rows = [
+    ...Array(4).fill({ hour: 8, delay: 60 }), // 1 min late: makes a 3-min change
+    { hour: 8, delay: 240 }, // 4 min late: misses
+    { hour: 8, delay: null }, // cancelled
+  ];
+  assert.deepEqual(connectionByHour(rows, 180), [{ hour: 8, trips: 6, madePercent: 67 }]);
+  assert.deepEqual(connectionByHour(rows, 300), [{ hour: 8, trips: 6, madePercent: 83 }]);
+});
+
+test('quiet hours (under 5 trips) are left out, the rest sorted by hour', () => {
+  const rows = [...Array(5).fill({ hour: '17', delay: 0 }), ...Array(5).fill({ hour: '7', delay: 0 }), { hour: 1, delay: 0 }];
+  assert.deepEqual(connectionByHour(rows, 180).map((h) => h.hour), [7, 17]);
+});
