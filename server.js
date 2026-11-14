@@ -667,6 +667,18 @@ app.post('/api/push/journey', express.json({ limit: '8kb' }), (req, res) => {
     pushJourneys.set(id, { ...j, sent: new Set(), until: Date.now() + 4 * 3600 * 1000 });
     res.status(201).json({ id });
 });
+// "Send a test alert": the same path as a real one, so you can check notifications reach you
+app.post('/api/push/journey/:id/test', async (req, res) => {
+    const j = pushJourneys.get(req.params.id);
+    if (!j) return res.status(404).json({ error: 'This journey isn’t being followed (start it again)' });
+    try {
+        await webpush.sendNotification(j.subscription, JSON.stringify({ title: 'Railway Live', body: 'Test alert: this is how your journey alerts will look.', tag: 'rl-test' }), { TTL: 60, urgency: 'high' });
+        res.status(204).end();
+    } catch (err) {
+        console.error('Test push failed:', err.statusCode ?? err.message);
+        res.status(502).json({ error: 'The browser’s push service didn’t accept it' });
+    }
+});
 app.delete('/api/push/journey/:id', (req, res) => {
     pushJourneys.delete(req.params.id);
     res.status(204).end();
@@ -699,6 +711,7 @@ async function watchPushJourneys() {
             j.sent.add(m.key);
             try {
                 await webpush.sendNotification(j.subscription, JSON.stringify({ title: 'Railway Live', body: m.text, tag: m.key }), { TTL: 120, urgency: 'high' });
+                console.log(`Push sent: ${m.key}`);
             } catch (err) {
                 // 404 / 410: the phone unsubscribed or the browser dropped it; stop following
                 if (err.statusCode === 404 || err.statusCode === 410) pushJourneys.delete(id);

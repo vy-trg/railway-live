@@ -2023,7 +2023,7 @@ async function tickJourney() {
         const left = nextIdx === -1 || offIdx === -1 ? null : offIdx - nextIdx + 1;
         const leavesIn = board ? Math.round(board.etaSec / 60) : null;
         steps.push({
-            kind: 'board', leg: l, done: boarded,
+            kind: 'board', leg: l, done: boarded, leavesIn,
             text: `Get on the ${lineOf(l)} to ${l.headsign}`,
             sub: `${l.from?.name ?? ''}${l.from?.platform ? `, platform ${l.from.platform}` : ''} · ${board?.expected ?? l.depart}${leavesIn !== null && leavesIn >= 0 && !boarded ? ` (in ${mins(leavesIn)})` : ''}`,
         });
@@ -2068,7 +2068,18 @@ async function tickJourney() {
     renderJourney(steps, current, lastRideDone, warn);
 }
 
+// The header says where you are in the journey, so the button never reads as "it's over" before it starts
+function renderJourneyHead(steps, current) {
+    const started = steps.some((s) => s.kind === 'board' && s.done);
+    const arrived = current === -1;
+    const firstBoard = steps.find((s) => s.kind === 'board');
+    $('go-title').textContent = arrived ? 'You’ve arrived' : started ? 'On your way' : `Up next${firstBoard?.leavesIn > 0 ? ` · leaves in ${mins(firstBoard.leavesIn)}` : ''}`;
+    $('go-end').textContent = arrived ? 'Done' : started ? 'Stop' : 'Cancel';
+    $('go-end').setAttribute('aria-label', arrived ? 'Close this journey' : started ? 'Stop following this journey' : 'Cancel this journey before it starts');
+}
+
 function renderJourney(steps, current, finished, warn) {
+    renderJourneyHead(steps, current);
     const now = steps[current];
     // A message belongs to the step it was about: moving on clears it (a new one may replace it)
     if (go.step !== undefined && go.step !== current && !warn && !go.freshAlert) $('go-alert').hidden = true;
@@ -2076,7 +2087,7 @@ function renderJourney(steps, current, finished, warn) {
     go.freshAlert = false;
     const nowBox = $('go-now');
     if (!now) {
-        nowBox.innerHTML = '<b>You’ve arrived.</b><span>Press End journey when you’re done.</span>';
+        nowBox.innerHTML = '<b>You’ve arrived.</b><span>Press Done to close this.</span>';
     } else {
         nowBox.innerHTML = `<b>${escapeHtml(now.text)}</b>${now.sub ? `<span>${escapeHtml(now.sub)}</span>` : ''}<div class="go-walk" data-walk></div>`;
         if (now.kind === 'walk') showWalkSteps(now.leg, steps, current);
@@ -2147,13 +2158,30 @@ const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const installed = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
 // Why notifications won't come, in plain words (shown under the journey)
-function pushNote(text) {
+function pushNote(text, journeyId = null) {
     const foot = $('go-foot');
     if (!foot) return;
     let note = document.getElementById('go-push');
-    if (!note) { note = document.createElement('p'); note.id = 'go-push'; note.className = 'go-push'; foot.before(note); }
-    note.textContent = text;
+    if (!note) { note = document.createElement('div'); note.id = 'go-push'; note.className = 'go-push'; foot.before(note); }
     note.hidden = !text;
+    note.innerHTML = text ? `<p>${escapeHtml(text)}</p>${journeyId ? '<button type="button" class="link-btn" id="go-test">Send a test alert</button><p class="go-test-note" id="go-test-note" hidden></p>' : ''}` : '';
+    if (!journeyId) return;
+    $('go-test').onclick = async () => {
+        const out = $('go-test-note');
+        out.hidden = false;
+        out.textContent = 'Sent. It should show in a few seconds, even on this screen.';
+        try {
+            const r = await fetch(`/api/push/journey/${encodeURIComponent(journeyId)}/test`, { method: 'POST' });
+            if (!r.ok) throw new Error();
+            setTimeout(() => {
+                out.textContent = /Mac/.test(navigator.platform)
+                    ? 'Nothing showed? On a Mac, also allow your browser in System Settings → Notifications, and check Focus / Do Not Disturb is off.'
+                    : 'Nothing showed? Check notifications are allowed for your browser in your device settings, and Do Not Disturb is off.';
+            }, 8000);
+        } catch {
+            out.textContent = 'Couldn’t send a test right now. Try Stop, then Start journey again.';
+        }
+    };
 }
 
 async function startPush(j) {
@@ -2194,7 +2222,7 @@ async function startPush(j) {
         if (!res.ok) throw new Error(String(res.status));
         const { id } = await res.json();
         try { localStorage.setItem(PUSH_KEY, id); } catch { /* fine */ }
-        pushNote('Alerts will come even with your phone locked.');
+        pushNote('Alerts will come even with your phone locked.', id);
     } catch {
         pushNote('Alerts with the screen locked aren’t available right now. Keep this page open and you’ll still get them here.');
     }
