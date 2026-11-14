@@ -64,7 +64,7 @@ export async function walkRoute(a, b, { fetchImpl = fetch, distanceM, mode = 'wa
   if (cache.has(key)) return cache.get(key);
   const url = `${ROUTERS[mode]}/${round(a.lng)},${round(a.lat)};${round(b.lng)},${round(b.lat)}?overview=full&geometries=geojson&steps=true`;
   const res = await fetchImpl(url, {
-    headers: { 'User-Agent': 'RailwayLive/1.0 (+https://github.com/vy-trg/railway-live)' },
+    headers: { 'User-Agent': 'Stopwise/1.0 (+https://github.com/vy-trg/stopwise)' },
     signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) throw new Error(`Walking router ${res.status}`);
@@ -86,7 +86,7 @@ export async function roadPath(points, { fetchImpl = fetch } = {}) {
   if (cache.has(key)) return cache.get(key);
   const url = `${ROUTERS.car}/${via.map(([lat, lng]) => `${round(lng)},${round(lat)}`).join(';')}?overview=full&geometries=geojson`;
   const res = await fetchImpl(url, {
-    headers: { 'User-Agent': 'RailwayLive/1.0 (+https://github.com/vy-trg/railway-live)' },
+    headers: { 'User-Agent': 'Stopwise/1.0 (+https://github.com/vy-trg/stopwise)' },
     signal: AbortSignal.timeout(6000),
   });
   if (!res.ok) throw new Error(`Road router ${res.status}`);

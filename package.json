@@ -1,5 +1,5 @@
 {
-  "name": "railway-live",
+  "name": "stopwise",
   "version": "1.0.0",
   "description": "Live map of Queensland Rail trains from TransLink GTFS-realtime",
   "main": "server.js",

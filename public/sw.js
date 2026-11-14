@@ -1,4 +1,4 @@
-// Railway Live service worker: makes the site installable (Add to Home Screen) and shows the
+// Stopwise service worker: makes the site installable (Add to Home Screen) and shows the
 // Start journey notifications the server pushes (push.js) when the page isn't on screen.
 // It doesn't store pages or data: everything here is live, and an old copy would be wrong.
 self.addEventListener('install', () => self.skipWaiting());
@@ -7,7 +7,7 @@ self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim(
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = { body: event.data?.text() }; }
-  event.waitUntil(self.registration.showNotification(data.title || 'Railway Live', {
+  event.waitUntil(self.registration.showNotification(data.title || 'Stopwise', {
     body: data.body || '',
     tag: data.tag || 'rl-go',
     renotify: true,

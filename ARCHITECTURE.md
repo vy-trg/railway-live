@@ -1,4 +1,4 @@
-# Railway Live – Architecture
+# Stopwise – Architecture
 
 This document answers the planning questions from my 5 Oct design review (updated 8 Nov to match what is built), then shows the architecture, data flow and state diagrams.
 

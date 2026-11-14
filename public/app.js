@@ -403,7 +403,7 @@ async function checkReminder() {
             const text = `${stop.name} in about ${mins(Math.max(1, Math.round(stop.etaSec / 60)))}. Get ready to get off.`;
             showBanner(text, true);
             if ('Notification' in window && Notification.permission === 'granted') {
-                try { new Notification('Railway Live', { body: text }); } catch { /* some phones only allow this from a service worker */ }
+                try { new Notification('Stopwise', { body: text }); } catch { /* some phones only allow this from a service worker */ }
             }
             reminder = null;
         }
@@ -1993,8 +1993,8 @@ function alertOnce(key, text) {
     let pushing = false;
     try { pushing = Boolean(localStorage.getItem(PUSH_KEY)); } catch { /* not kept */ }
     if (!pushing && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
-        navigator.serviceWorker?.ready.then((r) => r.showNotification('Railway Live', { body: text, tag: 'rl-go', renotify: true }))
-            .catch(() => { try { new Notification('Railway Live', { body: text }); } catch { /* not allowed */ } });
+        navigator.serviceWorker?.ready.then((r) => r.showNotification('Stopwise', { body: text, tag: 'rl-go', renotify: true }))
+            .catch(() => { try { new Notification('Stopwise', { body: text }); } catch { /* not allowed */ } });
     }
 }
 
@@ -2195,7 +2195,7 @@ function pushNote(text, journeyId = null) {
 
 async function startPush(j) {
     if (isIos && !installed) {
-        return pushNote('To get these alerts with your iPhone locked: Share, then Add to Home Screen (iOS 16.4 or later), open Railway Live from there and start the journey again. Until then, keep this page open.');
+        return pushNote('To get these alerts with your iPhone locked: Share, then Add to Home Screen (iOS 16.4 or later), open Stopwise from there and start the journey again. Until then, keep this page open.');
     }
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
         return pushNote('This browser can’t show alerts with the screen locked. Keep this page open and you’ll still get them here.');

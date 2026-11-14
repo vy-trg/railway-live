@@ -643,7 +643,7 @@ app.get('/api/shapes', handle(async (req, res) => {
 let pushReady = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
 if (pushReady) {
     try {
-        webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'https://github.com/vy-trg/railway-live', process.env.VAPID_PUBLIC_KEY.trim(), process.env.VAPID_PRIVATE_KEY.trim());
+        webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'https://github.com/vy-trg/stopwise', process.env.VAPID_PUBLIC_KEY.trim(), process.env.VAPID_PRIVATE_KEY.trim());
     } catch (err) {
         pushReady = false;
         console.error(`Push alerts are off: ${err.message} Check VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY (see .env.example).`);
@@ -672,7 +672,7 @@ app.post('/api/push/journey/:id/test', async (req, res) => {
     const j = pushJourneys.get(req.params.id);
     if (!j) return res.status(404).json({ error: 'This journey isn’t being followed (start it again)' });
     try {
-        await webpush.sendNotification(j.subscription, JSON.stringify({ title: 'Railway Live', body: 'Test alert: this is how your journey alerts will look.', tag: 'rl-test' }), { TTL: 60, urgency: 'high' });
+        await webpush.sendNotification(j.subscription, JSON.stringify({ title: 'Stopwise', body: 'Test alert: this is how your journey alerts will look.', tag: 'rl-test' }), { TTL: 60, urgency: 'high' });
         res.status(204).end();
     } catch (err) {
         console.error('Test push failed:', err.statusCode ?? err.message);
@@ -717,7 +717,7 @@ async function watchPushJourneys() {
             if (j.sent.has(m.key)) continue;
             j.sent.add(m.key);
             try {
-                await webpush.sendNotification(j.subscription, JSON.stringify({ title: 'Railway Live', body: m.text, tag: m.key }), { TTL: 120, urgency: 'high' });
+                await webpush.sendNotification(j.subscription, JSON.stringify({ title: 'Stopwise', body: m.text, tag: m.key }), { TTL: 120, urgency: 'high' });
                 console.log(`Push sent: ${m.key}`);
             } catch (err) {
                 // 404 / 410: the phone unsubscribed or the browser dropped it; stop following
@@ -776,7 +776,7 @@ app.get('/api/alerts', handle(async (req, res) => {
 }));
 
 app.listen(PORT, () => {
-    console.log(`Railway Live running on http://localhost:${PORT}`);
+    console.log(`Stopwise running on http://localhost:${PORT}`);
     // Load the journey planner's timetable now, so the first person to plan doesn't wait for it
     if (process.env.NODE_ENV !== 'test') getNetwork().catch((err) => console.error('Planner not loaded yet:', err.message));
 });

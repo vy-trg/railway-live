@@ -4,7 +4,7 @@
 
 I take the Springfield line, then a bus to Griffith's Nathan campus. If the train is a few minutes late, I miss the bus and wait for the next one. TransLink shows where each train and bus is, but not the question I actually have: *will I make this connection?*
 
-This feature answers it for one trip: given a train (with its live delay), the change point, and the walk, which bus can I catch, and is it **Make it / Tight / Miss**? Later it suggests the most reliable train + bus for a time I need to be at Nathan, using the delay history Railway Live already records.
+This feature answers it for one trip: given a train (with its live delay), the change point, and the walk, which bus can I catch, and is it **Make it / Tight / Miss**? Later it suggests the most reliable train + bus for a time I need to be at Nathan, using the delay history Stopwise already records.
 
 ## Where to change (from the timetable, 8 Nov)
 
@@ -37,7 +37,7 @@ flowchart LR
         BT["TripUpdates/Bus<br/>(keep 598 and M1 only)"]
         ZIP["SEQ_GTFS.zip<br/>bus routes 598-4, M1-4"]
     end
-    subgraph Server["railway-live (Express)"]
+    subgraph Server["stopwise (Express)"]
         Load["load-gtfs.js<br/>+ the two bus routes"]
         Model["connection.js<br/>train arrival + delay + walk<br/>→ next buses → Make it / Tight / Miss"]
         API["GET /api/connection?trip=…&via=sherwood|roma"]
