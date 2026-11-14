@@ -14,7 +14,7 @@ import { distanceM, EXTRA_CHANGE_SECS } from './raptor.js';
 import helmet from 'helmet';
 import webpush from 'web-push';
 import { randomUUID } from 'node:crypto';
-import { journeyMoments, journeyOver, cleanJourney } from './push.js';
+import { journeyMoments, journeyOver, cleanJourney, rideState } from './push.js';
 import { rateLimit } from 'express-rate-limit';
 
 const app = express();
@@ -685,28 +685,35 @@ app.delete('/api/push/journey/:id', (req, res) => {
 });
 
 // Every 15 seconds: where each followed ride is, and anything to tell its person
+// Where a vehicle really is (its last position report): the stop it's heading to or stopped at
+async function vehicleOf(tripId, mode) {
+    const feed = await (mode === 'bus' ? getBusVehicles() : getVehicles()).catch(() => null);
+    const v = feed?.data.find((x) => x.tripId === tripId);
+    return v ? { stopSequence: v.stopSequence, atStop: v.atStop } : null;
+}
 async function tripProgress(tripId) {
     const [trips, stops] = await Promise.all([db.getTrips([tripId]), db.getTripStops(tripId)]);
     const trip = trips.get(tripId);
     if (!trip || stops.length === 0) return null;
     const empty = { data: new Map() };
-    const [updates, now] = await Promise.all([trip.mode === 'bus' ? getBusTripUpdates().catch(() => empty) : getTripUpdates().catch(() => empty), nowSec()]);
+    const [updates, now, vehicle] = await Promise.all([trip.mode === 'bus' ? getBusTripUpdates().catch(() => empty) : getTripUpdates().catch(() => empty), nowSec(), vehicleOf(tripId, trip.mode)]);
     const clock = brisbaneClock(now);
     let dayStart = now - clock.secs;
     if (clock.secs < stops[0].departure_secs - 3600 * 4) dayStart -= 86400;
-    return buildTripProgress(stops, updates.data.get(tripId), now, dayStart);
+    return { stops: buildTripProgress(stops, updates.data.get(tripId), now, dayStart), vehicle };
 }
 async function watchPushJourneys() {
     const tripIds = [...new Set([...pushJourneys.values()].flatMap((j) => j.rides.map((r) => r.tripId)))];
     if (tripIds.length === 0) return;
     const progress = new Map();
+    const vehicles = new Map();
     for (const id of tripIds) {
         const p = await tripProgress(id).catch(() => null);
-        if (p) progress.set(id, p);
+        if (p) { progress.set(id, p.stops); if (p.vehicle) vehicles.set(id, p.vehicle); }
     }
     for (const [id, j] of pushJourneys) {
-        if (Date.now() > j.until || journeyOver(j.rides, progress)) { pushJourneys.delete(id); continue; }
-        for (const m of journeyMoments(j.rides, progress, j.walkMinsBefore)) {
+        if (Date.now() > j.until || journeyOver(j.rides, progress, vehicles)) { pushJourneys.delete(id); continue; }
+        for (const m of journeyMoments(j.rides, progress, j.walkMinsBefore, vehicles)) {
             if (j.sent.has(m.key)) continue;
             j.sent.add(m.key);
             try {
@@ -731,12 +738,16 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
         return res.status(404).json({ error: 'Trip not found' });
     }
     const empty = { data: new Map() };
-    const [updates, now] = await Promise.all([trip.mode === 'bus' ? getBusTripUpdates().catch(() => empty) : getTripUpdates(), nowSec()]);
+    const [updates, now, vehicle] = await Promise.all([trip.mode === 'bus' ? getBusTripUpdates().catch(() => empty) : getTripUpdates(), nowSec(), vehicleOf(tripId, trip.mode)]);
     // The service day started at midnight Brisbane time; a trip still running after midnight
     // belongs to yesterday's service day (its times are past 24:00).
     const clock = brisbaneClock(now);
     let dayStart = now - clock.secs;
     if (clock.secs < stops[0].departure_secs - 3600 * 4) dayStart -= 86400;
+    const progress = buildTripProgress(stops, updates.data.get(tripId), now, dayStart);
+    const fromSeq = Number(req.query.from);
+    const toSeq = Number(req.query.to);
+    const ride = Number.isInteger(fromSeq) && Number.isInteger(toSeq) ? rideState(progress, vehicle, fromSeq, toSeq) : undefined;
     res.json({
         tripId,
         routeName: trip.long_name,
@@ -746,7 +757,11 @@ app.get('/api/trips/:tripId', handle(async (req, res) => {
         color: `#${trip.color}`,
         textColor: `#${trip.text_color}`,
         now,
-        stops: buildTripProgress(stops, updates.data.get(tripId), now, dayStart),
+        stops: progress,
+        ride,
+        // Where the vehicle really is (position report), and, for Start journey (?from=&to= stop
+        // sequences), whether you've got on, got off, and how many stops are left
+        vehicle,
         // The track the trip really follows (rails, roads, river), when TransLink publishes it
         path: shapes.get(tripId) ?? null,
     });

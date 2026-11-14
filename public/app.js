@@ -1955,9 +1955,11 @@ document.addEventListener('visibilitychange', () => {
 // Where each ride is: its stops with passed / next / upcoming and seconds until each
 async function rideProgress(l) {
     try {
-        const t = await getJson(`/api/trips/${encodeURIComponent(l.tripId)}`);
-        go.trips.set(l.tripId, t.stops);
-        return t.stops;
+        // ?from=&to=: the server works out getting on / off from where the vehicle really is
+        const t = await getJson(`/api/trips/${encodeURIComponent(l.tripId)}?from=${l.fromSeq}&to=${l.toSeq}`);
+        const p = { stops: t.stops, ride: t.ride };
+        go.trips.set(l.tripId, p);
+        return p;
     } catch {
         return go.trips.get(l.tripId) ?? null; // offline for a moment: the last we knew
     }
@@ -2013,48 +2015,45 @@ async function tickJourney() {
             steps.push({ kind: 'walk', leg: l, text: `${l.platformChange ? 'Change platforms' : 'Walk'} about ${mins(l.minutes)} to ${where}`, done: false });
             return;
         }
-        const stops = progress[rides.indexOf(l)];
+        const p = progress[rides.indexOf(l)];
+        const stops = p?.stops;
+        const st = p?.ride ?? {};
         const board = stops?.find((s) => s.sequence === l.fromSeq);
         const off = stops?.find((s) => s.sequence === l.toSeq);
-        const boarded = board?.state === 'passed';
-        const arrived = off?.state === 'passed';
-        const nextIdx = stops ? stops.findIndex((s) => s.state === 'next') : -1;
-        const offIdx = stops ? stops.findIndex((s) => s.sequence === l.toSeq) : -1;
-        const left = nextIdx === -1 || offIdx === -1 ? null : offIdx - nextIdx + 1;
-        const leavesIn = board ? Math.round(board.etaSec / 60) : null;
+        const boarded = Boolean(st.boarded);
+        const arrived = Boolean(st.arrived);
+        const left = st.left ?? null;
+        const leavesIn = st.leavesIn ?? null;
         steps.push({
             kind: 'board', leg: l, done: boarded, leavesIn,
             text: `Get on the ${lineOf(l)} to ${l.headsign}`,
             sub: `${l.from?.name ?? ''}${l.from?.platform ? `, platform ${l.from.platform}` : ''} · ${board?.expected ?? l.depart}${leavesIn !== null && leavesIn >= 0 && !boarded ? ` (in ${mins(leavesIn)})` : ''}`,
         });
         steps.push({
-            kind: 'ride', leg: l, done: arrived, left, offEta: off?.etaSec ?? null,
+            kind: 'ride', leg: l, done: arrived, left, offEta: st.offEta ?? null,
             text: `Get off at ${l.to?.name ?? ''}`,
             sub: `${off?.expected ?? l.arrive}${boarded && !arrived && left !== null ? ` · ${left === 1 ? 'next stop' : `${left} stops to go`}` : ` · ${l.stops} stop${l.stops === 1 ? '' : 's'}`}`,
         });
-        // The moments to tell you about
+        // The moments to tell you about (the same ones the server pushes, push.js)
         if (!boarded && leavesIn !== null && leavesIn <= 2 && leavesIn >= -1) {
             alertOnce(`board-${l.tripId}`, `Your ${lineOf(l)} to ${l.headsign} leaves ${l.from?.name ?? ''}${l.from?.platform ? ` from platform ${l.from.platform}` : ''} in ${leavesIn <= 0 ? 'under a minute' : mins(leavesIn)}.`);
         }
-        // Arriving now: a second nudge at the stop, on top of the one 2 minutes / 1-2 stops before
-        if (!boarded && board && board.etaSec <= 30 && board.etaSec >= -30) {
-            alertOnce(`board-now-${l.tripId}`, `Your ${lineOf(l)} to ${l.headsign} is arriving at ${l.from?.name ?? 'the stop'} now. Get ready to get on.`);
+        if (!boarded && (st.headingToBoard || (st.boardEta !== null && st.boardEta !== undefined && st.boardEta <= 90 && st.boardEta >= -60))) {
+            alertOnce(`board-now-${l.tripId}`, `Your ${lineOf(l)} to ${l.headsign} is about to arrive at ${l.from?.name ?? 'the stop'}. Get ready to get on.`);
         }
-        if (boarded && !arrived && off && off.etaSec <= 30 && off.etaSec >= -30) {
-            alertOnce(`off-now-${l.tripId}`, `Get off now: ${l.to?.name ?? 'your stop'}.`);
+        // The next stop is yours: as soon as the vehicle leaves the stop before, or 90 s before by time
+        if (boarded && !arrived && (st.headingToOff || left === 1 || (st.offEta !== null && st.offEta !== undefined && st.offEta <= 90))) {
+            alertOnce(`off-now-${l.tripId}`, l.mode === 'bus' ? `Get off at the next stop: ${l.to?.name}. Press the bell now.` : `Get off at the next stop: ${l.to?.name}.`);
         }
-        const soon = l.mode === 'bus' ? 2 : 1;
-        if (boarded && !arrived && left !== null && left <= soon) {
-            alertOnce(`off-${l.tripId}-${left}`, l.mode === 'bus'
-                ? `${left === 1 ? 'Next stop' : '2 stops to go'}: get off at ${l.to?.name}. Press the bell${left === 1 ? ' now' : ' after the next stop'}.`
-                : `Next stop: get off at ${l.to?.name}${l.mode === 'ferry' ? '' : ''}. Get ready.`);
+        if (l.mode === 'bus' && boarded && !arrived && left === 2) {
+            alertOnce(`off-2-${l.tripId}`, `2 stops to go: get off at ${l.to?.name}. Press the bell after the next stop.`);
         }
         // Will you still make the next ride? (this one's expected arrival + the walk vs the next departure)
         const k = j.legs.indexOf(l);
         const nextRide = rides[rides.indexOf(l) + 1];
         if (nextRide && off && !arrived) {
             const walkMins = j.legs.slice(k + 1, j.legs.indexOf(nextRide)).reduce((n, x) => n + (x.minutes ?? 0), 0);
-            const nextStops = progress[rides.indexOf(nextRide)];
+            const nextStops = progress[rides.indexOf(nextRide)]?.stops;
             const nextBoard = nextStops?.find((s) => s.sequence === nextRide.fromSeq);
             if (nextBoard) {
                 const spare = nextBoard.etaSec - (off.etaSec + walkMins * 60);

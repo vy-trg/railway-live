@@ -12,7 +12,8 @@ Open a planned journey and press **Start journey** (shown from 90 minutes before
   - 2 minutes before your service leaves: "Your train to Caboolture leaves Springfield from platform 2 in 2 mins."
   - Train, tram, ferry: "Next stop: get off at Indooroopilly."
   - Bus: 2 stops before ("press the bell after the next stop") and 1 stop before ("press the bell now"). SEQ buses only stop if someone asks.
-  - Arriving now (30 seconds or less away), on top of the ones above: "is arriving at … now. Get ready to get on." and "Get off now: …". Checked every 15 seconds, so it comes at least 15 seconds before.
+  - About to arrive (90 seconds or less away by its time, or the vehicle's position report says it's heading to your stop): "is about to arrive at … Get ready to get on." and "Get off at the next stop: …".
+- **Get off never comes late:** predicted times can lag behind a bus that's running early, so getting off is worked out first from where the vehicle really is (its GPS position report says which stop it's heading to or stopped at; GTFS-RT `current_stop_sequence`). The alert comes as soon as it leaves the stop before yours. Predicted times are the fallback when there's no position report. Checked every 15 seconds.
   - About to miss a change because the one you're on is late: "You may miss the bus 468 at 3:42 pm", with **Find another way** (plans again from where you'll get off).
 - **Walking directions** for the walk you're on, in short sentences from the walking router (OpenStreetMap streets): "Head east on Station Rd for 80 m", "Turn left onto Coonan St".
 - **The screen stays on** while a journey is running (Wake Lock, where the browser has it).
