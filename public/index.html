@@ -120,6 +120,17 @@
 
             <!-- Journey planner: from one place to another, with changes -->
             <section id="view-plan" class="view" role="tabpanel" aria-labelledby="tab-plan" hidden>
+                <!-- Start journey: what to do now, step by step, following the vehicles live -->
+                <section id="go" class="go" aria-labelledby="go-title" hidden>
+                    <div class="go-head">
+                        <span class="go-tag" id="go-title">On your way</span>
+                        <button type="button" id="go-end" class="link-btn">End journey</button>
+                    </div>
+                    <div id="go-alert" class="go-alert" role="alert" hidden></div>
+                    <div class="go-now" id="go-now" aria-live="polite"></div>
+                    <ol class="go-steps" id="go-steps"></ol>
+                    <p class="go-foot" id="go-foot"></p>
+                </section>
                 <form id="plan-form" class="plan-form" novalidate>
                     <div class="plan-place">
                         <label class="field-label" for="plan-from">From</label>

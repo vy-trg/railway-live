@@ -26,14 +26,43 @@ export function parseRoute(json, mode = 'walk') {
     metres: Math.round(route.distance),
     // OSRM's own speeds differ a little; use the planner's so the page doesn't contradict itself
     secs: Math.round(route.distance / SPEED_MPS[mode]),
+    // Turn-by-turn in short sentences ("Turn left onto Station Rd"), for Start journey
+    steps: walkSteps(route),
   };
+}
+
+// OSRM's steps as short sentences. The names come from OpenStreetMap; a step without a street
+// name says what to do without one. Arriving is left out (the page says where you're going).
+const DIRS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+export function walkSteps(route) {
+  const out = [];
+  for (const leg of route?.legs ?? []) {
+    for (const st of leg.steps ?? []) {
+      const m = st.maneuver ?? {};
+      const name = st.name ? ` ${m.type === 'depart' ? 'on' : 'onto'} ${st.name}` : '';
+      const metres = Math.round((st.distance ?? 0) / 10) * 10;
+      let text;
+      if (m.type === 'arrive') continue;
+      if (m.type === 'depart') text = `Head ${DIRS[Math.round(((m.bearing_after ?? 0) % 360) / 45) % 8]}${name}`;
+      else if (m.modifier === 'straight' || m.type === 'continue' || m.type === 'new name') text = `Keep going${name}`;
+      else if (m.modifier && /left|right/.test(m.modifier)) {
+        const side = m.modifier.includes('left') ? 'left' : 'right';
+        text = `${m.modifier.startsWith('slight') ? 'Bear' : m.modifier.startsWith('sharp') ? 'Turn sharp' : m.modifier === 'uturn' ? 'Turn around' : 'Turn'} ${side}${name}`;
+      } else if (m.modifier === 'uturn') text = `Turn around${name}`;
+      else text = `Keep going${name}`;
+      // The same instruction twice in a row (OSRM splits a street into parts): one line
+      if (out.length && out[out.length - 1].text === text) { out[out.length - 1].metres += metres; continue; }
+      out.push({ text, metres });
+    }
+  }
+  return out.map((s) => (s.metres >= 20 ? `${s.text} for ${s.metres} m` : s.text));
 }
 
 export async function walkRoute(a, b, { fetchImpl = fetch, distanceM, mode = 'walk' } = {}) {
   if (distanceM && distanceM(a.lat, a.lng, b.lat, b.lng) > MAX_M[mode]) return null;
   const key = `${mode}:${walkKey(a, b)}`;
   if (cache.has(key)) return cache.get(key);
-  const url = `${ROUTERS[mode]}/${round(a.lng)},${round(a.lat)};${round(b.lng)},${round(b.lat)}?overview=full&geometries=geojson`;
+  const url = `${ROUTERS[mode]}/${round(a.lng)},${round(a.lat)};${round(b.lng)},${round(b.lat)}?overview=full&geometries=geojson&steps=true`;
   const res = await fetchImpl(url, {
     headers: { 'User-Agent': 'RailwayLive/1.0 (+https://github.com/vy-trg/railway-live)' },
     signal: AbortSignal.timeout(5000),

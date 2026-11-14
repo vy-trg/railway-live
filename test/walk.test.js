@@ -57,3 +57,26 @@ test('bike and car routes use their own router and speed, cached apart from walk
   assert.equal(bike.secs, Math.round(450 / (15 / 3.6)));
   assert.ok(car.secs < bike.secs);
 });
+
+// ---------- Turn-by-turn for Start journey ----------
+import { walkSteps } from '../walk.js';
+
+test('walking steps in short sentences, joined when a street is split, no "arrive"', () => {
+  const route = { legs: [{ steps: [
+    { name: 'Station Rd', distance: 82, maneuver: { type: 'depart', bearing_after: 85 } },
+    { name: 'Coonan St', distance: 41, maneuver: { type: 'turn', modifier: 'left' } },
+    { name: 'Coonan St', distance: 30, maneuver: { type: 'new name', modifier: 'straight' } },
+    { name: '', distance: 12, maneuver: { type: 'turn', modifier: 'slight right' } },
+    { name: '', distance: 0, maneuver: { type: 'arrive' } },
+  ] }] };
+  assert.deepEqual(walkSteps(route), [
+    'Head east on Station Rd for 80 m',
+    'Turn left onto Coonan St for 40 m',
+    'Keep going onto Coonan St for 30 m',
+    'Bear right',
+  ]);
+});
+
+test('no steps from the router: no instructions (the map still shows the walk)', () => {
+  assert.deepEqual(walkSteps({}), []);
+});

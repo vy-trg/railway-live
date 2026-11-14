@@ -1366,6 +1366,7 @@ async function findJourneys() {
     try {
         const res = await getJson(`/api/plan?${placeQuery('from', plan.from)}&${placeQuery('to', plan.to)}${at}`);
         plan.journeys = res.journeys;
+        plan.date = res.date;
         const n = `${res.journeys.length} ${res.journeys.length === 1 ? 'journey' : 'journeys'}`;
         $('plan-note').textContent = res.note ?? (res.nextDay
             ? `Nothing more today. ${n} tomorrow morning (timetable). Walks are estimates.`
@@ -1489,12 +1490,14 @@ function openPlanJourney(i) {
         card.setAttribute('aria-expanded', String(open));
         const legs = card.querySelector('.legs');
         legs.hidden = !open;
-        if (open) legs.innerHTML = legsHtml(plan.journeys[i]);
+        if (open) legs.innerHTML = legsHtml(plan.journeys[i]) + startButton(plan.journeys[i], i);
     }
     drawPlan(plan.journeys[i]);
 }
 
 $('plan-results').addEventListener('click', (e) => {
+    const go = e.target.closest('[data-start]');
+    if (go) { startJourney(plan.journeys[Number(go.dataset.start)], plan.date); return; }
     const card = e.target.closest('.trip-card');
     if (!card || !e.target.closest('button')) return;
     openPlanJourney(Number(card.dataset.i));
@@ -1883,3 +1886,243 @@ document.querySelector('#mode-seg').addEventListener('click', (e) => {
     if (btn) applyMode(btn.dataset.mode);
 });
 for (const b of document.querySelectorAll('#mode-seg button')) b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode));
+
+// ---------- Start journey (docs/start-journey.md) ----------
+// After you pick a planned journey: one instruction at a time ("Get on the train to Caboolture,
+// platform 2", "3 stops to go", "Next stop: get off at Indooroopilly"), worked out from where the
+// vehicle is (GET /api/trips/:id), not from your phone's GPS, so it works in tunnels too.
+// While the page is open: a sound, a buzz and a notification at the moments that matter, and the
+// screen stays on. The journey is remembered on this device, so a reload carries on.
+const GO_KEY = 'rl-go';
+const go = { j: null, date: null, trips: new Map(), done: new Set(), timer: null, wake: null, step: undefined, freshAlert: false };
+
+// Brisbane is UTC+10 all year: a time on the journey's day as a real moment
+const epochOf = (date, secs) => Date.parse(`${date}T00:00:00Z`) - 10 * 3600 * 1000 + secs * 1000;
+
+function startButton(j, i) {
+    const rides = j.legs.filter((l) => l.kind === 'ride');
+    if (!rides.length || !plan.date) return '';
+    const leave = epochOf(plan.date, j.leaveSecs ?? rides[0].departSecs);
+    const end = epochOf(plan.date, rides[rides.length - 1].arriveSecs);
+    // Only for a journey happening now: from 90 minutes before you leave until it's over
+    if (Date.now() < leave - 90 * 60000 || Date.now() > end + 10 * 60000) {
+        return '<p class="go-later">Start journey shows up from 90 minutes before you leave.</p>';
+    }
+    return `<button type="button" class="start-btn" data-start="${i}">Start journey</button>`;
+}
+
+function startJourney(j, date) {
+    go.j = j;
+    go.date = date;
+    go.trips.clear();
+    go.done.clear();
+    go.step = undefined;
+    $('go-alert').hidden = true;
+    try { localStorage.setItem(GO_KEY, JSON.stringify({ j, date })); } catch { /* fine for this visit */ }
+    // Asked here, when you press the button (browsers only allow asking after a tap)
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    keepAwake(true);
+    $('go').hidden = false;
+    $('view-plan').scrollTo?.({ top: 0 });
+    window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    tickJourney();
+    clearInterval(go.timer);
+    go.timer = setInterval(tickJourney, 15000);
+}
+
+function endJourney() {
+    clearInterval(go.timer);
+    go.j = null;
+    keepAwake(false);
+    try { localStorage.removeItem(GO_KEY); } catch { /* nothing kept */ }
+    $('go').hidden = true;
+}
+$('go-end').addEventListener('click', endJourney);
+
+// The screen stays on while a journey is running (where the browser allows it)
+async function keepAwake(on) {
+    try {
+        if (on && 'wakeLock' in navigator && !go.wake) go.wake = await navigator.wakeLock.request('screen');
+        if (!on && go.wake) { await go.wake.release(); go.wake = null; }
+    } catch { go.wake = null; }
+}
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && go.j) { go.wake = null; keepAwake(true); tickJourney(); }
+});
+
+// Where each ride is: its stops with passed / next / upcoming and seconds until each
+async function rideProgress(l) {
+    try {
+        const t = await getJson(`/api/trips/${encodeURIComponent(l.tripId)}`);
+        go.trips.set(l.tripId, t.stops);
+        return t.stops;
+    } catch {
+        return go.trips.get(l.tripId) ?? null; // offline for a moment: the last we knew
+    }
+}
+
+const NOUN = { train: 'train', bus: 'bus', ferry: 'ferry', tram: 'tram' };
+const nounOf = (l) => NOUN[l.mode] ?? 'service';
+const lineOf = (l) => (l.mode === 'train' ? `${l.routeName || 'train'}` : `${nounOf(l)} ${l.routeShort}`);
+
+// Once per moment: a sound, a buzz, a notification (if allowed) and the banner
+function alertOnce(key, text) {
+    if (go.done.has(key)) return;
+    go.done.add(key);
+    go.freshAlert = true;
+    const box = $('go-alert');
+    box.textContent = text;
+    box.hidden = false;
+    try { navigator.vibrate?.([200, 100, 200]); } catch { /* no vibration */ }
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        [784, 988].forEach((f, k) => {
+            const o = ctx.createOscillator(); const g = ctx.createGain();
+            o.frequency.value = f;
+            g.gain.setValueAtTime(0.0001, ctx.currentTime + k * 0.2);
+            g.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + k * 0.2 + 0.03);
+            g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + k * 0.2 + 0.45);
+            o.connect(g).connect(ctx.destination); o.start(ctx.currentTime + k * 0.2); o.stop(ctx.currentTime + k * 0.2 + 0.5);
+        });
+    } catch { /* no sound */ }
+    if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+        navigator.serviceWorker?.ready.then((r) => r.showNotification('Railway Live', { body: text, tag: 'rl-go', renotify: true }))
+            .catch(() => { try { new Notification('Railway Live', { body: text }); } catch { /* not allowed */ } });
+    }
+}
+
+// The steps of the journey and which one you're on, from the latest positions
+async function tickJourney() {
+    const j = go.j;
+    if (!j) return;
+    const rides = j.legs.filter((l) => l.kind === 'ride');
+    const progress = await Promise.all(rides.map(rideProgress));
+    if (go.j !== j) return;
+    const steps = [];
+    let current = -1;
+    let warn = null;
+    j.legs.forEach((l, i) => {
+        if (l.kind === 'walk') {
+            const to = l.to ?? j.legs[i + 1]?.from;
+            const where = to ? `${to.name}${to.platform ? `, platform ${to.platform}` : ''}` : (plan.to?.name ?? 'where you’re going');
+            steps.push({ kind: 'walk', leg: l, text: `${l.platformChange ? 'Change platforms' : 'Walk'} about ${mins(l.minutes)} to ${where}`, done: false });
+            return;
+        }
+        const stops = progress[rides.indexOf(l)];
+        const board = stops?.find((s) => s.sequence === l.fromSeq);
+        const off = stops?.find((s) => s.sequence === l.toSeq);
+        const boarded = board?.state === 'passed';
+        const arrived = off?.state === 'passed';
+        const nextIdx = stops ? stops.findIndex((s) => s.state === 'next') : -1;
+        const offIdx = stops ? stops.findIndex((s) => s.sequence === l.toSeq) : -1;
+        const left = nextIdx === -1 || offIdx === -1 ? null : offIdx - nextIdx + 1;
+        const leavesIn = board ? Math.round(board.etaSec / 60) : null;
+        steps.push({
+            kind: 'board', leg: l, done: boarded,
+            text: `Get on the ${lineOf(l)} to ${l.headsign}`,
+            sub: `${l.from?.name ?? ''}${l.from?.platform ? `, platform ${l.from.platform}` : ''} · ${board?.expected ?? l.depart}${leavesIn !== null && leavesIn >= 0 && !boarded ? ` (in ${mins(leavesIn)})` : ''}`,
+        });
+        steps.push({
+            kind: 'ride', leg: l, done: arrived, left, offEta: off?.etaSec ?? null,
+            text: `Get off at ${l.to?.name ?? ''}`,
+            sub: `${off?.expected ?? l.arrive}${boarded && !arrived && left !== null ? ` · ${left === 1 ? 'next stop' : `${left} stops to go`}` : ` · ${l.stops} stop${l.stops === 1 ? '' : 's'}`}`,
+        });
+        // The moments to tell you about
+        if (!boarded && leavesIn !== null && leavesIn <= 2 && leavesIn >= -1) {
+            alertOnce(`board-${l.tripId}`, `Your ${lineOf(l)} to ${l.headsign} leaves ${l.from?.name ?? ''}${l.from?.platform ? ` from platform ${l.from.platform}` : ''} in ${leavesIn <= 0 ? 'under a minute' : mins(leavesIn)}.`);
+        }
+        const soon = l.mode === 'bus' ? 2 : 1;
+        if (boarded && !arrived && left !== null && left <= soon) {
+            alertOnce(`off-${l.tripId}-${left}`, l.mode === 'bus'
+                ? `${left === 1 ? 'Next stop' : '2 stops to go'}: get off at ${l.to?.name}. Press the bell${left === 1 ? ' now' : ' after the next stop'}.`
+                : `Next stop: get off at ${l.to?.name}${l.mode === 'ferry' ? '' : ''}. Get ready.`);
+        }
+        // Will you still make the next ride? (this one's expected arrival + the walk vs the next departure)
+        const k = j.legs.indexOf(l);
+        const nextRide = rides[rides.indexOf(l) + 1];
+        if (nextRide && off && !arrived) {
+            const walkMins = j.legs.slice(k + 1, j.legs.indexOf(nextRide)).reduce((n, x) => n + (x.minutes ?? 0), 0);
+            const nextStops = progress[rides.indexOf(nextRide)];
+            const nextBoard = nextStops?.find((s) => s.sequence === nextRide.fromSeq);
+            if (nextBoard) {
+                const spare = nextBoard.etaSec - (off.etaSec + walkMins * 60);
+                if (spare < 0) warn = { leg: nextRide, from: l.to, at: off };
+            }
+        }
+    });
+    // Each walk is done once the ride after it has started (or, for the last one, never by itself)
+    steps.forEach((s, i) => {
+        if (s.kind !== 'walk') return;
+        s.done = steps.slice(i + 1).some((x) => x.done);
+        // The walk at the end: done once you've had time to walk it after getting off
+        const prev = steps[i - 1];
+        if (i === steps.length - 1 && prev?.done && prev.offEta !== null && prev.offEta <= -s.leg.minutes * 60) s.done = true;
+    });
+    current = steps.findIndex((s) => !s.done);
+    const lastRideDone = steps.filter((s) => s.kind === 'ride').every((s) => s.done);
+    renderJourney(steps, current, lastRideDone, warn);
+}
+
+function renderJourney(steps, current, finished, warn) {
+    const now = steps[current];
+    // A message belongs to the step it was about: moving on clears it (a new one may replace it)
+    if (go.step !== undefined && go.step !== current && !warn && !go.freshAlert) $('go-alert').hidden = true;
+    go.step = current;
+    go.freshAlert = false;
+    const nowBox = $('go-now');
+    if (!now) {
+        nowBox.innerHTML = '<b>You’ve arrived.</b><span>Press End journey when you’re done.</span>';
+    } else {
+        nowBox.innerHTML = `<b>${escapeHtml(now.text)}</b>${now.sub ? `<span>${escapeHtml(now.sub)}</span>` : ''}<div class="go-walk" data-walk></div>`;
+        if (now.kind === 'walk') showWalkSteps(now.leg, steps, current);
+    }
+    $('go-steps').innerHTML = steps.map((s, i) => `<li class="${s.done ? 'done' : i === current ? 'now' : ''}" style="--c:${escapeHtml(s.leg.color ?? '#8a8f87')}">
+        <b>${escapeHtml(s.text)}</b>${s.sub ? `<span>${escapeHtml(s.sub)}</span>` : ''}</li>`).join('');
+    $('go-foot').textContent = 'Steps follow where each vehicle is right now (TransLink live data, or the timetable when there’s none). Station exits aren’t published, so which way to walk out isn’t shown.';
+    if (warn) {
+        const text = `You may miss the ${lineOf(warn.leg)} at ${warn.leg.depart}: the one you’re on is running late.`;
+        alertOnce(`miss-${warn.leg.tripId}`, text);
+        $('go-alert').hidden = false;
+        $('go-alert').innerHTML = `${escapeHtml(text)} <button type="button" class="link-btn" id="go-replan">Find another way</button>`;
+        $('go-replan').onclick = () => replanFrom(warn.from);
+    }
+}
+
+// Turn-by-turn for the walk you're on (OpenStreetMap streets via the walking router)
+async function showWalkSteps(l, steps, i) {
+    const box = $('go-now').querySelector('[data-walk]');
+    const a = l.from ?? steps[i - 1]?.leg?.to ?? (plan.from?.lat !== undefined ? plan.from : null);
+    const b = l.to ?? steps[i + 1]?.leg?.from ?? (plan.to?.lat !== undefined ? plan.to : null);
+    if (!box || !a?.lat || !b?.lat) return;
+    const r = await streetWalk(a, b, l.mode === 'bike' || l.mode === 'car' ? l.mode : 'walk');
+    if (!r?.steps?.length || !box.isConnected) return;
+    box.innerHTML = `<ol>${r.steps.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ol>`;
+}
+
+// Late and about to miss a change: plan again from where you'll get off
+function replanFrom(stop) {
+    if (!stop) return;
+    endJourney();
+    const f = findStation(stop.name);
+    if (f.match) plan.from = { id: f.match.id, name: f.match.name };
+    else if (stop.lat !== undefined) plan.from = { lat: stop.lat, lng: stop.lng, name: 'Near me' };
+    $('plan-from').value = plan.from.name;
+    $('plan-when').value = '';
+    findJourneys();
+}
+
+// A journey started earlier on this device carries on after a reload (if it isn't over)
+try {
+    const saved = JSON.parse(localStorage.getItem(GO_KEY) || 'null');
+    if (saved?.j) {
+        const last = saved.j.legs.filter((l) => l.kind === 'ride').pop();
+        if (last && Date.now() < epochOf(saved.date, last.arriveSecs) + 30 * 60000) {
+            go.j = saved.j; go.date = saved.date;
+            $('go').hidden = false;
+            showTab('plan');
+            tickJourney();
+            go.timer = setInterval(tickJourney, 15000);
+            keepAwake(true);
+        } else localStorage.removeItem(GO_KEY);
+    }
+} catch { /* nothing kept */ }
