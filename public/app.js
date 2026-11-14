@@ -1466,14 +1466,19 @@ function legsHtml(j) {
         }
         const change = l.change ? `<span class="change ${l.change}">${CHANGE_TEXT[l.change]}</span>` : '';
         const status = l.status === 'cancelled' || l.live ? statusHtml(l.status, l.statusText) : '<span class="muted">Timetable (no live data yet)</span>';
-        const arriveLate = l.arriveExpected && l.arriveDelaySec !== null
-            ? `<s>${escapeHtml(l.arrive)}</s> <b class="late-text">${escapeHtml(l.arriveExpected)} (${lateText(l.arriveDelaySec)})</b>`
+        // Three rows on the line's colour: get on (time, where), the ride, get off (time, where).
+        // Both ends have their own time in the time column, so nobody has to find it inside a sentence.
+        const offTime = l.arriveExpected && l.arriveDelaySec !== null
+            ? `<s>${escapeHtml(l.arrive)}</s><small>${escapeHtml(l.arriveExpected)}</small>`
             : escapeHtml(l.arrive);
-        return `<li class="leg" style="--c:${escapeHtml(l.color)}">
+        return `<li class="leg ride" style="--c:${escapeHtml(l.color)}">
           <span class="t">${l.departExpected ? `<s>${escapeHtml(l.depart)}</s><small>${escapeHtml(l.departExpected)}</small>` : escapeHtml(l.depart)}</span>
-          <span class="d">${change}<b>${escapeHtml(legName(l))} to ${escapeHtml(l.headsign)}</b>
-            <span>From ${placeName(l.from)}${l.from?.platform ? `, platform ${escapeHtml(l.from.platform)}` : ''} · ${status}</span>
-            <span>${l.stops} stop${l.stops === 1 ? '' : 's'} · get off at ${placeName(l.to)}, ${arriveLate}</span></span>
+          <span class="d end on"><em>Get on</em><b>${placeName(l.from)}</b>${l.from?.platform ? `<span>Platform ${escapeHtml(l.from.platform)}</span>` : ''}</span>
+          <span class="t"></span>
+          <span class="d mid">${change}<b>${escapeHtml(legName(l))} to ${escapeHtml(l.headsign)}</b>
+            <span>${status} · ${l.stops} stop${l.stops === 1 ? '' : 's'}</span></span>
+          <span class="t off-t">${offTime}</span>
+          <span class="d end off"><em>Get off</em><b>${placeName(l.to)}</b>${l.arriveExpected && l.arriveDelaySec !== null ? `<span class="late-text">${lateText(l.arriveDelaySec)}</span>` : ''}</span>
         </li>`;
     }).join('');
 }
