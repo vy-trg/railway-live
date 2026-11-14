@@ -1,6 +1,6 @@
 {
-  "name": "Railway Live",
-  "short_name": "Railway Live",
+  "name": "Stopwise",
+  "short_name": "Stopwise",
   "description": "Live map, journey planner and step-by-step trips for South East Queensland trains, buses, trams and ferries.",
   "start_url": "/",
   "scope": "/",

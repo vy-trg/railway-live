@@ -76,7 +76,7 @@ export function journeyMoments(rides, progress, walkMinsBefore = [], vehicles = 
     const next = rides[i + 1];
     const nextBoard = next && progress.get(next.tripId)?.find((s) => s.sequence === next.fromSeq);
     if (next && st.offEta !== null && nextBoard && !arrived && nextBoard.etaSec - (st.offEta + (walkMinsBefore[i + 1] ?? 0) * 60) < 0) {
-      out.push({ key: `miss-${next.tripId}`, text: `You may miss the ${next.line} at ${next.depart}: the one you're on is running late. Open Railway Live to find another way.` });
+      out.push({ key: `miss-${next.tripId}`, text: `You may miss the ${next.line} at ${next.depart}: the one you're on is running late. Open Stopwise to find another way.` });
     }
   });
   return out;

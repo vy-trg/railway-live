@@ -1,13 +1,13 @@
-# Railway Live 🚆
-![CI](https://github.com/vy-trg/railway-live/actions/workflows/ci.yml/badge.svg)
+# Stopwise 🚏
+![CI](https://github.com/vy-trg/stopwise/actions/workflows/ci.yml/badge.svg)
 
 Live trains, buses, trams and ferries for South East Queensland: where every service is, how late it is, the next departures from any station or bus stop, current track closures, and which services are most often late. An Express server joins TransLink's realtime feeds with the timetable in PostgreSQL and serves clean JSON to a Leaflet map.
 
-📁 **[GitHub Repo](https://github.com/vy-trg/railway-live)**
+📁 **[GitHub Repo](https://github.com/vy-trg/stopwise)**
 
 🔗 **[Live Demo](https://railway-live.onrender.com/)**
 
-<p align="center"><img src="docs/screenshot.png" alt="Railway Live on a Saturday evening: 45 trains, 12 trams and 8 ferries on the map, late services listed first" width="720"></p>
+<p align="center"><img src="docs/screenshot.png" alt="Stopwise on a Saturday evening: 45 trains, 12 trams and 8 ferries on the map, late services listed first" width="720"></p>
 
 ---
 
@@ -15,9 +15,9 @@ Live trains, buses, trams and ferries for South East Queensland: where every ser
 
 I take the Springfield line to uni, then a bus to Griffith's Nathan campus. TransLink's app shows where my train is right now, but not how reliable each service usually is. A train that is regularly a few minutes late at a certain time decides whether I make the bus.
 
-Railway Live shows every train, tram and ferry live, and records how late each service runs every 10 minutes. The Stats tab shows which lines, times of day and departures are most often late, so I can pick a train I can rely on instead of guessing. Success means: after two weeks of data, I know which morning Springfield train is the most reliable.
+Stopwise shows every train, tram and ferry live, and records how late each service runs every 10 minutes. The Stats tab shows which lines, times of day and departures are most often late, so I can pick a train I can rely on instead of guessing. Success means: after two weeks of data, I know which morning Springfield train is the most reliable.
 
-Then the harder question for anyone who changes from a train to a bus: **will I make the connection?** TransLink shows where each vehicle is, but not that. Railway Live now answers it for any station and any bus (or train) after it, and can walk you through the trip one step at a time.
+Then the harder question for anyone who changes from a train to a bus: **will I make the connection?** TransLink shows where each vehicle is, but not that. Stopwise now answers it for any station and any bus (or train) after it, and can walk you through the trip one step at a time.
 
 ---
 
@@ -25,7 +25,7 @@ Then the harder question for anyone who changes from a train to a bus: **will I 
 
 TransLink publishes where every train is, but in Protocol Buffers (a binary format), not JSON, and the feed only changes about every 30 seconds. If every browser fetched it directly, each visitor would hit TransLink separately and the browser would have to decode protobuf itself.
 
-Railway Live puts a thin server in between: it fetches and decodes the feed **at most once every 30 seconds**, however many people have the map open, and hands the browser a small, clean JSON list.
+Stopwise puts a thin server in between: it fetches and decodes the feed **at most once every 30 seconds**, however many people have the map open, and hands the browser a small, clean JSON list.
 
 **My role:** Solo project. I built the GTFS-RT ingestion and cache on the server, the `/api/trains` endpoint, and the Leaflet map with its status banner.
 
@@ -104,8 +104,8 @@ Push alerts are optional. To try them locally, make a key pair once (`npx web-pu
 **Needs:** Node.js 22 or newer and a PostgreSQL database (Neon, or Docker below). No API key is required.
 
 ```bash
-git clone https://github.com/vy-trg/railway-live.git
-cd railway-live
+git clone https://github.com/vy-trg/stopwise.git
+cd stopwise
 npm install
 ```
 
