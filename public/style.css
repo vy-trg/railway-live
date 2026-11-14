@@ -688,3 +688,4 @@ body.map-full .leaflet-top { top: env(safe-area-inset-top, 0px); }
 /* Stats: making a connection */
 .conn-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
 .conn-tools select { flex: 1; min-width: 10rem; }
+.conn-summary { margin: 10px 2px 0; font-size: 0.8rem; line-height: 1.45; color: var(--muted); }

@@ -1824,7 +1824,7 @@ async function loadConnStats() {
         const best = c.byHour.reduce((a, b) => (b.madePercent > a.madePercent ? b : a));
         const worst = c.byHour.reduce((a, b) => (b.madePercent < a.madePercent ? b : a));
         box.innerHTML = `${bars(c.byHour.map((h) => ({ ...h, onTimePercent: h.madePercent })), (h) => hourLabel(h.hour))}
-          <p class="hint">With ${connSpare} minutes to change, ${escapeHtml(hourLabel(worst.hour))} trains were the least likely to get you there (${worst.madePercent}%), ${escapeHtml(hourLabel(best.hour))} the most (${best.madePercent}%). From ${c.trips.toLocaleString('en-AU')} trips; how late a train was at the end of its run stands in for how late it is where you change.</p>`;
+          <p class="conn-summary">With ${connSpare} minutes to change, ${escapeHtml(hourLabel(worst.hour))} trains were the least likely to get you there (${worst.madePercent}%), ${escapeHtml(hourLabel(best.hour))} the most (${best.madePercent}%). From ${c.trips.toLocaleString('en-AU')} trips; how late a train was at the end of its run stands in for how late it is where you change.</p>`;
     } catch {
         box.innerHTML = '<p class="empty">This isn’t loading right now. Try again in a minute.</p>';
     }
